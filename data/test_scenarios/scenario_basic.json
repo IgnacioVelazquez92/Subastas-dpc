@@ -1,0 +1,104 @@
+{
+  "scenario_name": "basic_stable",
+  "description": "Escenario básico: 3 renglones con precios estables, sin cambios durante 30 ticks",
+  "metadata": {
+    "author": "DPC",
+    "created_at": "2026-02-07",
+    "version": "1.0",
+    "tags": ["basic", "stable", "test"]
+  },
+  
+  "subasta": {
+    "id_cot": "22053",
+    "margen_minimo": "0.01"
+  },
+  
+  "renglones": [
+    {
+      "id_renglon": "836160",
+      "descripcion": "Impresora Laser A4 Monocromo - HP LaserJet Pro",
+      "estado_inicial": {
+        "mejor_oferta": 20000000.0,
+        "presupuesto": 21600000.0,
+        "ofertas_historicas": [
+          {
+            "proveedor": "Prov. 30718165",
+            "monto": 20000000.0,
+            "hora": "10:00:00",
+            "vigente": true
+          },
+          {
+            "proveedor": "Prov. 91764",
+            "monto": 20200000.0,
+            "hora": "09:45:00",
+            "vigente": false
+          },
+          {
+            "proveedor": "Prov. 30986286",
+            "monto": 20550400.0,
+            "hora": "09:30:00",
+            "vigente": false
+          }
+        ]
+      },
+      "timeline": [],
+      "auto_behavior": {
+        "type": "none"
+      }
+    },
+    {
+      "id_renglon": "836161",
+      "descripcion": "Monitor LED 24 pulgadas Full HD",
+      "estado_inicial": {
+        "mejor_oferta": 850000.0,
+        "presupuesto": 918000.0,
+        "ofertas_historicas": [
+          {
+            "proveedor": "Prov. 12345",
+            "monto": 850000.0,
+            "hora": "10:15:00",
+            "vigente": true
+          },
+          {
+            "proveedor": "Prov. 67890",
+            "monto": 865000.0,
+            "hora": "10:00:00",
+            "vigente": false
+          }
+        ]
+      },
+      "timeline": [],
+      "auto_behavior": {
+        "type": "none"
+      }
+    },
+    {
+      "id_renglon": "836162",
+      "descripcion": "Teclado USB español con ñ",
+      "estado_inicial": {
+        "mejor_oferta": 45000.0,
+        "presupuesto": 54000.0,
+        "ofertas_historicas": [
+          {
+            "proveedor": "Prov. 11111",
+            "monto": 45000.0,
+            "hora": "10:20:00",
+            "vigente": true
+          }
+        ]
+      },
+      "timeline": [],
+      "auto_behavior": {
+        "type": "none"
+      }
+    }
+  ],
+  
+  "global_events": [],
+  
+  "config": {
+    "tick_duration_seconds": 1.0,
+    "max_ticks": 30,
+    "seed": 12345
+  }
+}

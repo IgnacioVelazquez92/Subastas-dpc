@@ -1,0 +1,86 @@
+{
+  "scenario_name": "price_war",
+  "description": "Guerra de precios: Los precios caen 1% cada minuto (tick) durante 20 ticks",
+  "metadata": {
+    "author": "DPC",
+    "created_at": "2026-02-07",
+    "version": "1.0",
+    "tags": ["volatile", "price_drop", "test"]
+  },
+  
+  "subasta": {
+    "id_cot": "22054",
+    "margen_minimo": "0.01"
+  },
+  
+  "renglones": [
+    {
+      "id_renglon": "836200",
+      "descripcion": "Notebook Core i5 8GB RAM 256GB SSD",
+      "estado_inicial": {
+        "mejor_oferta": 10000000.0,
+        "presupuesto": 11000000.0,
+        "ofertas_historicas": [
+          {
+            "proveedor": "Prov. A",
+            "monto": 10000000.0,
+            "hora": "10:00:00",
+            "vigente": true
+          },
+          {
+            "proveedor": "Prov. B",
+            "monto": 10100000.0,
+            "hora": "09:55:00",
+            "vigente": false
+          }
+        ]
+      },
+      "timeline": [],
+      "auto_behavior": {
+        "type": "drop_linear",
+        "drop_pct_per_tick": 0.01,
+        "start_tick": 1,
+        "end_tick": 20
+      }
+    },
+    {
+      "id_renglon": "836201",
+      "descripcion": "Mouse Inalámbrico Óptico",
+      "estado_inicial": {
+        "mejor_oferta": 250000.0,
+        "presupuesto": 300000.0,
+        "ofertas_historicas": [
+          {
+            "proveedor": "Prov. C",
+            "monto": 250000.0,
+            "hora": "10:05:00",
+            "vigente": true
+          }
+        ]
+      },
+      "timeline": [],
+      "auto_behavior": {
+        "type": "drop_linear",
+        "drop_pct_per_tick": 0.015,
+        "start_tick": 3,
+        "end_tick": 18
+      }
+    }
+  ],
+  
+  "global_events": [
+    {
+      "tick": 21,
+      "event_type": "end_auction",
+      "data": {
+        "message": "Subasta finalizada por tiempo"
+      }
+    }
+  ],
+  
+  "config": {
+    "tick_duration_seconds": 60.0,
+    "max_ticks": 25,
+    "seed": 54321
+  }
+}

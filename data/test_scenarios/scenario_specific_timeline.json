@@ -1,0 +1,127 @@
+{
+  "scenario_name": "specific_timeline_demo",
+  "description": "Timeline específico con eventos exactos en ticks predefinidos. Perfecto para validar logs predecibles.",
+  "metadata": {
+    "author": "DPC",
+    "created_at": "2026-02-07",
+    "version": "1.0",
+    "tags": ["timeline", "predictable", "demo", "test"]
+  },
+  
+  "subasta": {
+    "id_cot": "22056",
+    "margen_minimo": "0.01"
+  },
+  
+  "renglones": [
+    {
+      "id_renglon": "836400",
+      "descripcion": "Proyector LED 3000 lumens HDMI",
+      "estado_inicial": {
+        "mejor_oferta": 5000000.0,
+        "presupuesto": 5500000.0,
+        "ofertas_historicas": [
+          {
+            "proveedor": "Prov. Alpha",
+            "monto": 5000000.0,
+            "hora": "10:00:00",
+            "vigente": true
+          },
+          {
+            "proveedor": "Prov. Beta",
+            "monto": 5100000.0,
+            "hora": "09:55:00",
+            "vigente": false
+          }
+        ]
+      },
+      "timeline": [
+        {
+          "tick": 2,
+          "action": "update_mejor_oferta",
+          "data": {
+            "proveedor": "Prov. Beta",
+            "monto": 4950000.0,
+            "mensaje": "Nueva oferta competitiva"
+          }
+        },
+        {
+          "tick": 5,
+          "action": "update_mejor_oferta",
+          "data": {
+            "proveedor": "Prov. Alpha",
+            "monto": 4900000.0,
+            "mensaje": "Contraoferta mejorada"
+          }
+        },
+        {
+          "tick": 7,
+          "action": "mensaje",
+          "data": {
+            "mensaje": "⏰ Quedan 5 minutos para finalizar"
+          }
+        },
+        {
+          "tick": 10,
+          "action": "update_mejor_oferta",
+          "data": {
+            "proveedor": "Prov. Gamma",
+            "monto": 4850000.0,
+            "mensaje": "Nuevo competidor ingresa en la puja"
+          }
+        },
+        {
+          "tick": 11,
+          "action": "mensaje",
+          "data": {
+            "mensaje": "⚠️ Última oportunidad para ofertar"
+          }
+        },
+        {
+          "tick": 12,
+          "action": "update_mejor_oferta",
+          "data": {
+            "proveedor": "Prov. Alpha",
+            "monto": 4840000.0,
+            "mensaje": "Oferta final agresiva"
+          }
+        }
+      ],
+      "auto_behavior": {
+        "type": "none"
+      }
+    }
+  ],
+  
+  "global_events": [
+    {
+      "tick": 13,
+      "event_type": "end_auction",
+      "data": {
+        "message": "🏁 Subasta finalizada - Ganador: Prov. Alpha con $4.840.000,00"
+      }
+    }
+  ],
+  
+  "config": {
+    "tick_duration_seconds": 30.0,
+    "max_ticks": 15,
+    "seed": 11111,
+    "expected_logs": [
+      "[10:00:00] SNAPSHOT: id_cot=22056 renglones=1 mejor=$5.000.000,0000",
+      "[10:00:30] Tick 1 (sin cambios)",
+      "[10:01:00] UPDATE r=836400 mejor=$4.950.000,0000 min=$4.900.500,0000 (Prov. Beta) - Nueva oferta competitiva",
+      "[10:01:30] Tick 3 (sin cambios)",
+      "[10:02:00] Tick 4 (sin cambios)",
+      "[10:02:30] UPDATE r=836400 mejor=$4.900.000,0000 min=$4.851.000,0000 (Prov. Alpha) - Contraoferta mejorada",
+      "[10:03:00] Tick 6 (sin cambios)",
+      "[10:03:30] MENSAJE r=836400: ⏰ Quedan 5 minutos para finalizar",
+      "[10:04:00] Tick 8 (sin cambios)",
+      "[10:04:30] Tick 9 (sin cambios)",
+      "[10:05:00] UPDATE r=836400 mejor=$4.850.000,0000 min=$4.801.500,0000 (Prov. Gamma) - Nuevo competidor ingresa en la puja",
+      "[10:05:30] MENSAJE r=836400: ⚠️ Última oportunidad para ofertar",
+      "[10:06:00] UPDATE r=836400 mejor=$4.840.000,0000 min=$4.791.600,0000 (Prov. Alpha) - Oferta final agresiva",
+      "[10:06:30] 🏁 END - Subasta finalizada - Ganador: Prov. Alpha con $4.840.000,00"
+    ]
+  }
+}

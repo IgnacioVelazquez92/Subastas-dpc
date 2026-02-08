@@ -1,0 +1,184 @@
+{
+  "scenario_name": "controlled_real_scenario",
+  "description": "Escenario controlado con 4 cambios de precio + 2 errores HTTP 500. Datos reales del portal.",
+  "metadata": {
+    "author": "DPC",
+    "created_at": "2026-02-07",
+    "version": "2.0",
+    "notes": "Basado en response real de BuscarOfertas del portal webecommerce.cba.gov.ar",
+    "tags": ["real_data", "controlled", "http_errors", "test"]
+  },
+  
+  "subasta": {
+    "id_cot": "22053",
+    "url": "https://webecommerce.cba.gov.ar/VistaPublica/SubastaVivoAccesoPublico.aspx/BuscarOfertas"
+  },
+  
+  "timeline": [
+    {
+      "tick": 0,
+      "hora": "10:00:00",
+      "status": 200,
+      "description": "Snapshot inicial - Estado capturado del portal",
+      "renglones": [
+        {
+          "id_renglon": "836160",
+          "descripcion": "IMPRESORA LASER A4 MONOCROMO",
+          "response_json": {
+            "d": "[{\"id_oferta_subasta\":1,\"id_cotizacion_det\":null,\"id_renglon\":836160,\"id_proveedor\":30696129,\"monto\":20115680,\"cantidad\":null,\"fecha_hora\":null,\"proveedor\":\"Prov. 30718165\",\"mejor_oferta\":\"Mejor Oferta Vigente:\",\"hora\":\"10:33:06\",\"monto_acumulado_renglon\":null,\"monto_a_mostrar\":\"$ 20.115.680,0000\"},{\"id_oferta_subasta\":2,\"id_cotizacion_det\":null,\"id_renglon\":836160,\"id_proveedor\":69728,\"monto\":20251036,\"cantidad\":null,\"fecha_hora\":null,\"proveedor\":\"Prov. 91764\",\"mejor_oferta\":\"Oferta Superada:\",\"hora\":\"10:08:06\",\"monto_acumulado_renglon\":null,\"monto_a_mostrar\":\"$ 20.251.036,0000\"},{\"id_oferta_subasta\":3,\"id_cotizacion_det\":null,\"id_renglon\":836160,\"id_proveedor\":30696129,\"monto\":20352800,\"cantidad\":null,\"fecha_hora\":null,\"proveedor\":\"Prov. 30718165\",\"mejor_oferta\":\"Oferta Superada:\",\"hora\":\"08:49:26\",\"monto_acumulado_renglon\":null,\"monto_a_mostrar\":\"$ 20.352.800,0000\"},{\"id_oferta_subasta\":4,\"id_cotizacion_det\":null,\"id_renglon\":836160,\"id_proveedor\":30964250,\"monto\":20550400,\"cantidad\":null,\"fecha_hora\":null,\"proveedor\":\"Prov. 30986286\",\"mejor_oferta\":\"Oferta Superada:\",\"hora\":\"08:46:31\",\"monto_acumulado_renglon\":null,\"monto_a_mostrar\":\"$ 20.550.400,0000\"},{\"id_oferta_subasta\":5,\"id_cotizacion_det\":null,\"id_renglon\":836160,\"id_proveedor\":30696129,\"monto\":21577920,\"cantidad\":null,\"fecha_hora\":null,\"proveedor\":\"Prov. 30718165\",\"mejor_oferta\":\"Oferta Superada:\",\"hora\":\"08:43:22\",\"monto_acumulado_renglon\":null,\"monto_a_mostrar\":\"$ 21.577.920,0000\"},{\"id_oferta_subasta\":6,\"id_cotizacion_det\":null,\"id_renglon\":836160,\"id_proveedor\":69728,\"monto\":21696480,\"cantidad\":null,\"fecha_hora\":null,\"proveedor\":\"Prov. 91764\",\"mejor_oferta\":\"Oferta Superada:\",\"hora\":\"08:14:21\",\"monto_acumulado_renglon\":null,\"monto_a_mostrar\":\"$ 21.696.480,0000\"}]@@$ 21.696.480,0000@@$ 20.015.101,6000@@"
+          }
+        }
+      ]
+    },
+    {
+      "tick": 1,
+      "hora": "10:01:00",
+      "status": 200,
+      "description": "Sin cambios - monitoreo normal"
+    },
+    {
+      "tick": 2,
+      "hora": "10:02:00",
+      "status": 200,
+      "description": "Sin cambios - monitoreo normal"
+    },
+    {
+      "tick": 3,
+      "hora": "10:03:00",
+      "status": 200,
+      "description": "CAMBIO 1: Prov. 91764 mejora la oferta a $20.000.000",
+      "renglones": [
+        {
+          "id_renglon": "836160",
+          "response_json": {
+            "d": "[{\"id_oferta_subasta\":1,\"id_cotizacion_det\":null,\"id_renglon\":836160,\"id_proveedor\":69728,\"monto\":20000000,\"cantidad\":null,\"fecha_hora\":null,\"proveedor\":\"Prov. 91764\",\"mejor_oferta\":\"Mejor Oferta Vigente:\",\"hora\":\"10:02:45\",\"monto_acumulado_renglon\":null,\"monto_a_mostrar\":\"$ 20.000.000,0000\"},{\"id_oferta_subasta\":2,\"id_cotizacion_det\":null,\"id_renglon\":836160,\"id_proveedor\":30696129,\"monto\":20115680,\"cantidad\":null,\"fecha_hora\":null,\"proveedor\":\"Prov. 30718165\",\"mejor_oferta\":\"Oferta Superada:\",\"hora\":\"10:33:06\",\"monto_acumulado_renglon\":null,\"monto_a_mostrar\":\"$ 20.115.680,0000\"},{\"id_oferta_subasta\":3,\"id_cotizacion_det\":null,\"id_renglon\":836160,\"id_proveedor\":69728,\"monto\":20251036,\"cantidad\":null,\"fecha_hora\":null,\"proveedor\":\"Prov. 91764\",\"mejor_oferta\":\"Oferta Superada:\",\"hora\":\"10:08:06\",\"monto_acumulado_renglon\":null,\"monto_a_mostrar\":\"$ 20.251.036,0000\"}]@@$ 21.696.480,0000@@$ 19.800.000,0000@@"
+          }
+        }
+      ]
+    },
+    {
+      "tick": 4,
+      "hora": "10:04:00",
+      "status": 200,
+      "description": "Sin cambios - estable"
+    },
+    {
+      "tick": 5,
+      "hora": "10:05:00",
+      "status": 500,
+      "error_message": "Internal Server Error - timeout BD",
+      "description": "ERROR HTTP 500: Timeout en base de datos del portal"
+    },
+    {
+      "tick": 6,
+      "hora": "10:06:00",
+      "status": 200,
+      "description": "Sin cambios - recuperado del error"
+    },
+    {
+      "tick": 7,
+      "hora": "10:07:00",
+      "status": 200,
+      "description": "CAMBIO 2: Prov. 30718165 mejora a $19.850.000",
+      "renglones": [
+        {
+          "id_renglon": "836160",
+          "response_json": {
+            "d": "[{\"id_oferta_subasta\":1,\"id_cotizacion_det\":null,\"id_renglon\":836160,\"id_proveedor\":30696129,\"monto\":19850000,\"cantidad\":null,\"fecha_hora\":null,\"proveedor\":\"Prov. 30718165\",\"mejor_oferta\":\"Mejor Oferta Vigente:\",\"hora\":\"10:06:30\",\"monto_acumulado_renglon\":null,\"monto_a_mostrar\":\"$ 19.850.000,0000\"},{\"id_oferta_subasta\":2,\"id_cotizacion_det\":null,\"id_renglon\":836160,\"id_proveedor\":69728,\"monto\":20000000,\"cantidad\":null,\"fecha_hora\":null,\"proveedor\":\"Prov. 91764\",\"mejor_oferta\":\"Oferta Superada:\",\"hora\":\"10:02:45\",\"monto_acumulado_renglon\":null,\"monto_a_mostrar\":\"$ 20.000.000,0000\"},{\"id_oferta_subasta\":3,\"id_cotizacion_det\":null,\"id_renglon\":836160,\"id_proveedor\":30696129,\"monto\":20115680,\"cantidad\":null,\"fecha_hora\":null,\"proveedor\":\"Prov. 30718165\",\"mejor_oferta\":\"Oferta Superada:\",\"hora\":\"10:33:06\",\"monto_acumulado_renglon\":null,\"monto_a_mostrar\":\"$ 20.115.680,0000\"}]@@$ 21.696.480,0000@@$ 19.651.500,0000@@"
+          }
+        }
+      ]
+    },
+    {
+      "tick": 8,
+      "hora": "10:08:00",
+      "status": 200,
+      "description": "Sin cambios"
+    },
+    {
+      "tick": 9,
+      "hora": "10:09:00",
+      "status": 200,
+      "description": "Sin cambios"
+    },
+    {
+      "tick": 10,
+      "hora": "10:10:00",
+      "status": 200,
+      "description": "CAMBIO 3: Prov. 91764 contraataca con $19.700.000",
+      "renglones": [
+        {
+          "id_renglon": "836160",
+          "response_json": {
+            "d": "[{\"id_oferta_subasta\":1,\"id_cotizacion_det\":null,\"id_renglon\":836160,\"id_proveedor\":69728,\"monto\":19700000,\"cantidad\":null,\"fecha_hora\":null,\"proveedor\":\"Prov. 91764\",\"mejor_oferta\":\"Mejor Oferta Vigente:\",\"hora\":\"10:09:15\",\"monto_acumulado_renglon\":null,\"monto_a_mostrar\":\"$ 19.700.000,0000\"},{\"id_oferta_subasta\":2,\"id_cotizacion_det\":null,\"id_renglon\":836160,\"id_proveedor\":30696129,\"monto\":19850000,\"cantidad\":null,\"fecha_hora\":null,\"proveedor\":\"Prov. 30718165\",\"mejor_oferta\":\"Oferta Superada:\",\"hora\":\"10:06:30\",\"monto_acumulado_renglon\":null,\"monto_a_mostrar\":\"$ 19.850.000,0000\"},{\"id_oferta_subasta\":3,\"id_cotizacion_det\":null,\"id_renglon\":836160,\"id_proveedor\":69728,\"monto\":20000000,\"cantidad\":null,\"fecha_hora\":null,\"proveedor\":\"Prov. 91764\",\"mejor_oferta\":\"Oferta Superada:\",\"hora\":\"10:02:45\",\"monto_acumulado_renglon\":null,\"monto_a_mostrar\":\"$ 20.000.000,0000\"}]@@$ 21.696.480,0000@@$ 19.503.000,0000@@"
+          }
+        }
+      ]
+    },
+    {
+      "tick": 11,
+      "hora": "10:11:00",
+      "status": 200,
+      "description": "Sin cambios"
+    },
+    {
+      "tick": 12,
+      "hora": "10:12:00",
+      "status": 500,
+      "error_message": "Internal Server Error - conexión perdida con el servidor",
+      "description": "ERROR HTTP 500: Conexión perdida"
+    },
+    {
+      "tick": 13,
+      "hora": "10:13:00",
+      "status": 200,
+      "description": "CAMBIO 4: Prov. 30718165 última mejora a $19.600.000",
+      "renglones": [
+        {
+          "id_renglon": "836160",
+          "response_json": {
+            "d": "[{\"id_oferta_subasta\":1,\"id_cotizacion_det\":null,\"id_renglon\":836160,\"id_proveedor\":30696129,\"monto\":19600000,\"cantidad\":null,\"fecha_hora\":null,\"proveedor\":\"Prov. 30718165\",\"mejor_oferta\":\"Mejor Oferta Vigente:\",\"hora\":\"10:12:45\",\"monto_acumulado_renglon\":null,\"monto_a_mostrar\":\"$ 19.600.000,0000\"},{\"id_oferta_subasta\":2,\"id_cotizacion_det\":null,\"id_renglon\":836160,\"id_proveedor\":69728,\"monto\":19700000,\"cantidad\":null,\"fecha_hora\":null,\"proveedor\":\"Prov. 91764\",\"mejor_oferta\":\"Oferta Superada:\",\"hora\":\"10:09:15\",\"monto_acumulado_renglon\":null,\"monto_a_mostrar\":\"$ 19.700.000,0000\"},{\"id_oferta_subasta\":3,\"id_cotizacion_det\":null,\"id_renglon\":836160,\"id_proveedor\":30696129,\"monto\":19850000,\"cantidad\":null,\"fecha_hora\":null,\"proveedor\":\"Prov. 30718165\",\"mejor_oferta\":\"Oferta Superada:\",\"hora\":\"10:06:30\",\"monto_acumulado_renglon\":null,\"monto_a_mostrar\":\"$ 19.850.000,0000\"}]@@$ 21.696.480,0000@@$ 19.404.000,0000@@"
+          }
+        }
+      ]
+    },
+    {
+      "tick": 14,
+      "hora": "10:14:00",
+      "status": 200,
+      "description": "Sin cambios - últimos momentos"
+    },
+    {
+      "tick": 15,
+      "hora": "10:15:00",
+      "status": 200,
+      "event": "end_auction",
+      "message": "Subasta finalizada - Ganador: Prov. 30718165 con $ 19.600.000,0000",
+      "description": "FIN DE SUBASTA"
+    }
+  ],
+  
+  "config": {
+    "tick_duration_seconds": 60.0,
+    "max_ticks": 20,
+    "expected_behavior": "✅ 4 cambios de precio | ❌ 2 errores HTTP 500 | 🏁 Finaliza en tick 15",
+    "expected_logs": [
+      "[10:00:00] SNAPSHOT: id_renglon=836160 mejor=$ 20.115.680,0000 min=$ 20.015.101,6000",
+      "[10:01:00] Tick 1 (sin cambios)",
+      "[10:02:00] Tick 2 (sin cambios)",
+      "[10:03:00] 🔄 UPDATE r=836160 mejor=$ 20.000.000,0000 min=$ 19.800.000,0000 (Prov. 91764)",
+      "[10:04:00] Tick 4 (sin cambios)",
+      "[10:05:00] ❌ HTTP 500 - Internal Server Error - timeout BD",
+      "[10:06:00] Tick 6 (sin cambios - recuperado)",
+      "[10:07:00] 🔄 UPDATE r=836160 mejor=$ 19.850.000,0000 min=$ 19.651.500,0000 (Prov. 30718165)",
+      "[10:08:00] Tick 8 (sin cambios)",
+      "[10:09:00] Tick 9 (sin cambios)",
+      "[10:10:00] 🔄 UPDATE r=836160 mejor=$ 19.700.000,0000 min=$ 19.503.000,0000 (Prov. 91764)",
+      "[10:11:00] Tick 11 (sin cambios)",
+      "[10:12:00] ❌ HTTP 500 - Internal Server Error - conexión perdida",
+      "[10:13:00] 🔄 UPDATE r=836160 mejor=$ 19.600.000,0000 min=$ 19.404.000,0000 (Prov. 30718165)",
+      "[10:14:00] Tick 14 (sin cambios)",
+      "[10:15:00] 🏁 END - Subasta finalizada - Ganador: Prov. 30718165"
+    ]
+  }
+}
