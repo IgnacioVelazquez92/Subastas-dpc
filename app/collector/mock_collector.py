@@ -195,6 +195,7 @@ class MockCollector(BaseCollector):
                 best = st.ofertas[0] if st.ofertas else None
                 mejor_txt = best.monto_a_mostrar if best else ""
                 mejor_val = float(best.monto) if best else None
+                hora_ultima_oferta = best.hora if best else None
 
                 self.emit(
                     info(
@@ -211,6 +212,7 @@ class MockCollector(BaseCollector):
                             "presupuesto_txt": st.presupuesto_txt,
                             "presupuesto_val": st.presupuesto_val,
                             "mensaje": st.mensaje,
+                            "hora_ultima_oferta": hora_ultima_oferta,
                             "http_status": 200,
                         },
                     )

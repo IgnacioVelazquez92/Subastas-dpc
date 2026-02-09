@@ -7,7 +7,6 @@ Responsabilidad única: Convertir eventos del motor en cambios de estado de tabl
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Optional
 
 from app.core.events import Event, EventType
@@ -222,14 +221,13 @@ class EventProcessor:
         row.mejor_oferta_txt = payload.get("mejor_oferta_txt")
         row.oferta_min_txt = payload.get("oferta_min_txt")
         
-        # Mensaje con timestamp si hay cambio
+        # OBS / CAMBIO: usar texto provisto por backend (hora real de oferta)
         msg = str(payload.get("mensaje") or "")
-        changed = bool(payload.get("changed", False))
-        if changed:
-            ts = datetime.now().strftime("%H:%M:%S")
-            row.obs_cambio = f"{msg} | cambio {ts}" if msg else f"Cambio detectado | {ts}"
-        else:
-            row.obs_cambio = msg or row.obs_cambio
+        obs_cambio = payload.get("obs_cambio")
+        if obs_cambio:
+            row.obs_cambio = str(obs_cambio)
+        elif msg:
+            row.obs_cambio = msg
         
         # Datos técnicos (REFACTORED)
         row.unidad_medida = payload.get("unidad_medida")

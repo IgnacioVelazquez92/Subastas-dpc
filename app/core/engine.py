@@ -366,6 +366,7 @@ class Engine:
         oferta_min_txt = payload.get("oferta_min_txt") or ""
         presupuesto_txt = payload.get("presupuesto_txt") or ""
         mensaje = payload.get("mensaje") or ""
+        hora_ultima_oferta = payload.get("hora_ultima_oferta")
         http_status = int(payload.get("http_status", 200))
 
         mejor_val = payload.get("mejor_oferta_val")
@@ -656,8 +657,14 @@ class Engine:
             print(f"  mensaje='{decision.message}'")
             print(f"{'='*60}\n")
 
-        # Persistir campos de cálculo para que la UI los vea también en refresh desde BD.
         existing = excel or {}
+        obs_cambio_texto = existing.get("obs_cambio")
+        if hora_ultima_oferta:
+            obs_cambio_texto = f"Ultima oferta: {hora_ultima_oferta}"
+        elif mensaje:
+            obs_cambio_texto = mensaje
+
+        # Persistir campos de cálculo para que la UI los vea también en refresh desde BD.
         self.db.upsert_renglon_excel(
             renglon_id=renglon_pk,
             unidad_medida=unidad_medida,
@@ -680,7 +687,7 @@ class Engine:
             renta_para_mejorar=renta_para_mejorar,
             oferta_para_mejorar=oferta_para_mejorar,
             mejor_oferta_txt=mejor_txt,
-            obs_cambio=(mensaje or existing.get("obs_cambio")),
+            obs_cambio=obs_cambio_texto,
             precio_referencia_subasta=existing.get("precio_referencia_subasta"),
             updated_at=now_iso(),
         )
@@ -717,7 +724,8 @@ class Engine:
                     "renta_para_mejorar": renta_para_mejorar,
                     "oferta_para_mejorar": oferta_para_mejorar,
                     "mejor_oferta_txt": mejor_txt,  # 🔥 USAR VALOR DEL ESTADO, NO DE BD EXCEL
-                    "obs_cambio": obs_cambio,
+                    "obs_cambio": obs_cambio_texto,
+                    "hora_ultima_oferta": hora_ultima_oferta,
                     "utilidad_pct": utilidad_pct,
                     "seguir": bool(seguir),
                     "oferta_mia": bool(oferta_mia),

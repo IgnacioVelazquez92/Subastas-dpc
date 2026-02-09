@@ -493,6 +493,7 @@ class PlaywrightCollector(BaseCollector):
                 presupuesto_val = parsed.get("presupuesto_val")
 
                 mensaje = parsed.get("mensaje", "") or ""
+                hora_ultima_oferta = parsed.get("hora_ultima_oferta")
 
                 sig = f"{mejor_txt}|{oferta_min_txt}|{mensaje}"
                 changed = last_sig.get(rid) != sig
@@ -522,6 +523,7 @@ class PlaywrightCollector(BaseCollector):
                             "presupuesto_txt": presupuesto_txt,
                             "presupuesto_val": presupuesto_val,
                             "mensaje": mensaje,
+                            "hora_ultima_oferta": hora_ultima_oferta,
                             "changed": changed,
                             "http_status": 200,
                         },
@@ -590,11 +592,13 @@ class PlaywrightCollector(BaseCollector):
         # Mejor oferta: por observación, ofertas[0] suele ser "Mejor Oferta Vigente"
         mejor_txt = ""
         mejor_val = None
+        hora_ultima_oferta = None
         if ofertas:
             mejor_txt = ofertas[0].get("monto_a_mostrar") or ""
             # el portal también trae "monto" numérico a veces
             # pero confiamos más en monto_a_mostrar y lo parseamos
             mejor_val = money_to_float(mejor_txt)
+            hora_ultima_oferta = ofertas[0].get("hora") or None
 
         presupuesto_val = money_to_float(presupuesto_txt)
         oferta_min_val = money_to_float(oferta_min_txt)
@@ -607,5 +611,6 @@ class PlaywrightCollector(BaseCollector):
             "oferta_min_val": oferta_min_val,
             "mejor_oferta_txt": mejor_txt,
             "mejor_oferta_val": mejor_val,
+            "hora_ultima_oferta": hora_ultima_oferta,
             "mensaje": mensaje,
         }
