@@ -128,3 +128,62 @@ class RenglonVista:
 
     seguir: bool = False
     oferta_mia: bool = False
+
+# -------------------------
+# Formato para UI en Treeview
+# -------------------------
+
+@dataclass
+class UIRow:
+    """
+    Fila en la UI (Treeview).
+    
+    Contiene todos los campos que se muestran en la tabla,
+    incluyendo datos de oferta, costos y rentabilidad calculados.
+    """
+    id_renglon: str
+    desc: str
+    
+    # IDs de referencia
+    id_subasta: Optional[str] = None
+    subasta_id: Optional[str] = None
+    renglon_pk: Optional[int] = None
+    
+    # Datos de oferta
+    mejor_oferta_txt: Optional[str] = None
+    oferta_min_txt: Optional[str] = None
+    oferta_para_mejorar: Optional[float] = None
+    precio_referencia: Optional[float] = None
+    
+    # Observaciones
+    obs_cambio: Optional[str] = None
+    
+    # Datos técnicos del renglón
+    unidad_medida: Optional[str] = None
+    cantidad: Optional[float] = None
+    marca: Optional[str] = None
+    obs_usuario: Optional[str] = None
+    
+    # Conversión y costos
+    conv_usd: Optional[float] = None
+    costo_unit_usd: Optional[float] = None
+    costo_total_usd: Optional[float] = None
+    costo_unit_ars: Optional[float] = None
+    costo_total_ars: Optional[float] = None
+    renta_minima: Optional[float] = None
+    
+    # Precios aceptables
+    precio_unit_aceptable: Optional[float] = None
+    precio_total_aceptable: Optional[float] = None
+    
+    # Análisis de referencia
+    precio_ref_unitario: Optional[float] = None
+    renta_referencia: Optional[float] = None
+    
+    # Análisis de mejora
+    precio_unit_mejora: Optional[float] = None
+    renta_para_mejorar: Optional[float] = None
+    
+    # Flags de estado
+    seguir: bool = False
+    oferta_mia: bool = False

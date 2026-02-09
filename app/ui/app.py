@@ -21,7 +21,8 @@ from queue import Empty
 from typing import Optional
 
 from app.core.app_runtime import RuntimeHandles
-from app.core.events import Event
+from app.core.events import Event, EventType
+from app.core.alert_engine import RowStyle
 from app.models.domain import UIRow
 from app.ui.table_manager import TableManager
 from app.ui.column_manager import ColumnManager
@@ -29,6 +30,7 @@ from app.ui.event_handler import EventProcessor
 from app.ui.row_editor import RowEditorDialog
 from app.ui.logger_widget import LoggerWidget
 from app.ui.formatters import DisplayValues
+from app.ui.led_indicator import HTTPStatusLED, OfferChangeLED
 
 
 class App(ctk.CTk):
@@ -45,6 +47,10 @@ class App(ctk.CTk):
         self.engine_out_q = handles.engine_out_q
         self.collector_cmd_q = handles.collector_cmd_q
 
+        # MEJORA VISUAL: Sistema de zoom global
+        self.zoom_level = 1.0  # 1.0 = 100%, 1.1 = 110%, etc.
+        self.base_font_sizes = {}  # Para restaurar tamaños originales
+        
         # Componentes especializados
         self.rows: dict[str, UIRow] = {}  # Cache de renglones
         
@@ -54,10 +60,28 @@ class App(ctk.CTk):
         self.event_processor: Optional[EventProcessor] = None
         self.logger: Optional[LoggerWidget] = None
         
+        # LEDs de estado
+        self.http_led: Optional[HTTPStatusLED] = None
+        self.offer_led: Optional[OfferChangeLED] = None
+        
         self.lbl_status: Optional[ctk.CTkLabel] = None
+
+        # Filtros de tabla
+        self.filter_hide_empty = tk.BooleanVar(value=False)
+        self.filter_with_cost = tk.BooleanVar(value=False)
+        self.filter_tracked = tk.BooleanVar(value=False)
+        self.filter_viable_only = tk.BooleanVar(value=False)
+        self.filter_empty_column = tk.StringVar(value="conv_usd")
+        self._filter_columns: list[str] = []
 
         self._build_ui()
 
+        # Bindings para zoom (Ctrl++ y Ctrl+-)
+        self.bind("<Control-plus>", lambda e: self._zoom_in())
+        self.bind("<Control-equal>", lambda e: self._zoom_in())  # Windows alt para +
+        self.bind("<Control-minus>", lambda e: self._zoom_out())
+        self.bind("<Control-0>", lambda e: self._zoom_reset())
+        
         # Poll de eventos desde engine
         self.after(100, self._poll_events)
 
@@ -66,27 +90,147 @@ class App(ctk.CTk):
     # -------------------------
     def _build_ui(self):
         """Construye estructura principal y crea managers."""
-        # Panel superior con botones
+        # Panel superior con botones principales y LEDs
         top = ctk.CTkFrame(self)
         top.pack(fill="x", padx=10, pady=10)
 
-        ctk.CTkButton(top, text="Abrir navegador", command=self.on_start_browser).pack(side="left")
-        ctk.CTkButton(top, text="Capturar subasta actual", command=self.on_capture_current).pack(side="left", padx=8)
-        ctk.CTkButton(top, text="Detener", command=self.on_stop).pack(side="left", padx=8)
-        ctk.CTkButton(top, text="Importar Excel", command=self.on_import_excel).pack(side="left", padx=8)
-        ctk.CTkButton(top, text="Exportar Excel", command=self.on_export_excel).pack(side="left", padx=8)
-        ctk.CTkButton(top, text="Editar registro", command=self.on_edit_row).pack(side="left", padx=8)
-        ctk.CTkButton(top, text="Columnas", command=self.on_columns).pack(side="left", padx=8)
-        ctk.CTkButton(top, text="Liberar espacio", command=self.on_cleanup).pack(side="left", padx=8)
+        # Botones principales (control)
+        control_frame = ctk.CTkFrame(top, fg_color="transparent")
+        control_frame.pack(side="left", fill="x", expand=True)
 
-        self.lbl_status = ctk.CTkLabel(top, text="RUNNING", font=ctk.CTkFont(size=14, weight="bold"))
-        self.lbl_status.pack(side="right")
+        ctk.CTkButton(
+            control_frame,
+            text="▶️  Abrir navegador",
+            command=self.on_start_browser,
+            width=140,
+        ).pack(side="left", padx=4)
+
+        ctk.CTkButton(
+            control_frame,
+            text="📸 Capturar actual",
+            command=self.on_capture_current,
+            width=140,
+        ).pack(side="left", padx=4)
+
+        ctk.CTkButton(
+            control_frame,
+            text="🔄 Actualizar",
+            command=self.on_refresh_ui,
+            width=120,
+        ).pack(side="left", padx=4)
+
+        ctk.CTkButton(
+            control_frame,
+            text="⏹️  Detener",
+            command=self.on_stop,
+            width=100,
+        ).pack(side="left", padx=4)
+
+        # Menu de Opciones
+        ctk.CTkButton(
+            control_frame,
+            text="⚙️  Opciones",
+            command=self._show_options_menu,
+            width=120,
+        ).pack(side="left", padx=4)
+
+        # LEDs de estado
+        leds_frame = ctk.CTkFrame(top, fg_color="transparent")
+        leds_frame.pack(side="right")
+
+        self.http_led = HTTPStatusLED(leds_frame)
+        self.http_led.pack(side="left", padx=8)
+
+        self.offer_led = OfferChangeLED(leds_frame)
+        self.offer_led.pack(side="left", padx=8)
+
+        # Status label
+        self.lbl_status = ctk.CTkLabel(
+            leds_frame,
+            text="RUNNING",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            text_color="#1309A2",
+        )
+        self.lbl_status.pack(side="right", padx=12)
+
+        # Barra de filtros (debajo de los controles principales)
+        filter_bar = ctk.CTkFrame(self)
+        filter_bar.pack(fill="x", padx=10, pady=(0, 10))
+
+        ctk.CTkLabel(
+            filter_bar,
+            text="Filtros:",
+            font=ctk.CTkFont(size=11, weight="bold"),
+        ).pack(side="left", padx=(6, 10))
+
+        ctk.CTkSwitch(
+            filter_bar,
+            text="Ocultar vacias",
+            variable=self.filter_hide_empty,
+            command=self._on_filter_changed,
+        ).pack(side="left", padx=6)
+
+        self._filter_columns = [
+            "conv_usd",
+            "costo_unit_usd",
+            "costo_total_usd",
+            "costo_unit_ars",
+            "costo_total_ars",
+            "renta_para_mejorar",
+        ]
+
+        ctk.CTkOptionMenu(
+            filter_bar,
+            values=self._filter_columns,
+            variable=self.filter_empty_column,
+            command=lambda _: self._on_filter_changed(),
+            width=160,
+        ).pack(side="left", padx=6)
+
+        ctk.CTkSwitch(
+            filter_bar,
+            text="Solo con costo",
+            variable=self.filter_with_cost,
+            command=self._on_filter_changed,
+        ).pack(side="left", padx=6)
+
+        ctk.CTkSwitch(
+            filter_bar,
+            text="Solo seguimiento",
+            variable=self.filter_tracked,
+            command=self._on_filter_changed,
+        ).pack(side="left", padx=6)
+
+        ctk.CTkSwitch(
+            filter_bar,
+            text="Solo en carrera",
+            variable=self.filter_viable_only,
+            command=self._on_filter_changed,
+        ).pack(side="left", padx=6)
+
+        ctk.CTkButton(
+            filter_bar,
+            text="Mostrar todo",
+            width=110,
+            command=self._reset_filters,
+        ).pack(side="right", padx=6)
 
         # Panel central: tabla
         body = ctk.CTkFrame(self)
         body.pack(fill="both", expand=True, padx=10, pady=(0, 10))
 
-        self.tree = ttk.Treeview(body, columns=(), show="headings", height=16)
+        # Obtener configuración de tabla para crear treeview con columnas
+        table_config = TableManager.get_default_config()
+        
+        # Configurar estilo de Treeview: headers en 2 líneas con \n + tooltips dinámicos
+        # Los saltos de línea (\n) SÍ funcionan en ttk.Treeview headers
+        style = ttk.Style()
+        style.configure('Treeview', font=("Segoe UI", 11), rowheight=22)
+        style.configure('Treeview.Heading', font=("Segoe UI", 10, "bold"))
+        
+        # Crear tabla con columnas correctas
+        self.tree = ttk.Treeview(body, columns=table_config.columns, show="headings", height=16)
+        self.tree.pack(side="top", fill="both", expand=True)
         self.tree.pack(side="top", fill="both", expand=True)
 
         yscroll = ttk.Scrollbar(body, orient="vertical", command=self.tree.yview)
@@ -100,13 +244,13 @@ class App(ctk.CTk):
         # Crear managers
         self.table_mgr = TableManager(self.tree)
         self.table_mgr.initialize()
-        
+
         self.col_mgr = ColumnManager(self.tree, self.handles.runtime, self.table_mgr.config)
-        
-        # Logger
+
+        # Logger mejorado
         self.logger = LoggerWidget(self, height=8)
-        
-        # Event processor
+
+        # Event processor con referencia a LEDs
         self.event_processor = EventProcessor(
             table_mgr=self.table_mgr,
             rows_cache=self.rows,
@@ -114,16 +258,39 @@ class App(ctk.CTk):
             logger=self.logger.log,
             audio_bell_fn=self.bell,
         )
-        
-        # Cargar columnas guardadas
+        # Registrar callbacks para LEDs
+        self.event_processor.on_offer_changed = self.offer_led.on_offer_changed
+        self.event_processor.on_http_event = self.http_led.on_http_status
+
+        # Cargar columnas guardadas (REFACTORED: usar nombres nuevos)
         default_cols = [
-            "id_subasta", "item", "desc", "unidad", "cantidad", "marca", "obs",
-            "conv_usd", "costo_usd", "costo_final", "subtotal_costo",
-            "renta", "p_unit_min", "subtotal", "renta_ref", "p_unit_mejora",
-            "precio_ref_subasta", "mejor", "subtotal_mejorar", "dif_unit",
-            "renta_dpc", "obs_det",
+            "id_subasta", "item", "desc", "unidad_medida", "cantidad", "marca",
+            "obs_usuario", "conv_usd", "costo_unit_usd", "costo_total_usd",
+            "costo_unit_ars", "costo_total_ars", "renta_minima",
+            "precio_unit_aceptable", "precio_total_aceptable",
+            "precio_referencia", "precio_ref_unitario", "renta_referencia",
+            "mejor_oferta", "oferta_para_mejorar",
+            "precio_unit_mejora", "renta_para_mejorar", "obs_cambio",
         ]
         self.col_mgr.load_visible_columns(default_cols)
+
+
+    def _show_options_menu(self) -> None:
+        """Abre un menú popup con las opciones adicionales."""
+        # Crear un menú contextual
+        menu = tk.Menu(self, tearoff=False, bg="#2B2B2B", fg="#FFFFFF")
+
+        menu.add_command(label="📋 Editar renglón", command=self.on_edit_row)
+        menu.add_command(label="📊 Columnas", command=self.on_columns)
+        menu.add_separator()
+        menu.add_command(label="📥 Importar Excel", command=self.on_import_excel)
+        menu.add_command(label="📤 Exportar Excel", command=self.on_export_excel)
+        menu.add_separator()
+        menu.add_command(label="🗑️  Liberar espacio", command=self.on_cleanup)
+
+        # Mostrar menú en la posición del mouse
+        menu.post(self.winfo_pointerx(), self.winfo_pointery())
+
     
     def _set_status(self, text: str) -> None:
         """Actualiza etiqueta de status."""
@@ -135,14 +302,66 @@ class App(ctk.CTk):
     # -------------------------
     def _poll_events(self):
         """Obtiene eventos de engine y los procesa."""
+        had_updates = False
         try:
             while True:
                 ev: Event = self.engine_out_q.get_nowait()
+                if ev.type in (EventType.SNAPSHOT, EventType.UPDATE):
+                    had_updates = True
                 self.event_processor.process_event(ev)
         except Empty:
             pass
 
+        if had_updates:
+            self._apply_filters()
+
         self.after(100, self._poll_events)
+
+    def _on_filter_changed(self) -> None:
+        """Callback de UI para aplicar filtros en la tabla."""
+        self._apply_filters()
+
+    def _reset_filters(self) -> None:
+        """Resetea todos los filtros y muestra todas las filas."""
+        self.filter_hide_empty.set(False)
+        self.filter_with_cost.set(False)
+        self.filter_tracked.set(False)
+        self.filter_viable_only.set(False)
+        self._apply_filters()
+
+    def _apply_filters(self) -> None:
+        """Aplica filtros sobre la tabla según estado actual de UI."""
+        if not self.table_mgr:
+            return
+
+        empty_col = self.filter_empty_column.get()
+
+        def predicate(row: UIRow) -> bool:
+            if self.filter_tracked.get() and not row.seguir:
+                return False
+            if self.filter_with_cost.get() and not (row.costo_unit_ars or row.costo_total_ars):
+                return False
+            
+            # 🔥 Filtro "Solo en carrera": ocultar renglones fuera de umbral
+            if self.filter_viable_only.get():
+                # renta_minima es fracción (ej: 0.15 = 15%, 0.30 = 30%)
+                # renta_para_mejorar es fracción (ej: 0.12 = 12%)
+                # Comparar: renta_para_mejorar >= renta_minima
+                if row.renta_minima is not None and row.renta_para_mejorar is not None:
+                    if float(row.renta_para_mejorar) < float(row.renta_minima):
+                        return False  # Ocultar (no está en carrera)
+            
+            if self.filter_hide_empty.get():
+                if not hasattr(row, empty_col):
+                    return True
+                value = getattr(row, empty_col)
+                if value is None:
+                    return False
+                if isinstance(value, str) and not value.strip():
+                    return False
+            return True
+
+        self.table_mgr.apply_filter(self.rows, predicate)
 
     # -------------------------
     # User Actions
@@ -154,75 +373,237 @@ class App(ctk.CTk):
     def on_capture_current(self) -> None:
         """Envia comando al collector para capturar estado actual."""
         self.collector_cmd_q.put({"cmd": "capture_current"})
-        self.logger.log("CMD: capture_current enviado al collector (si es Playwright, capturará).")
+        self.logger.log("📸 Captura de subasta actual solicitada...")
+
+    def on_refresh_ui(self) -> None:
+        """Refresca la UI leyendo datos actuales desde la BD."""
+        self._refresh_rows_from_db()
+        self.logger.log("🔄 UI actualizada desde BD.")
+
+    def _refresh_rows_from_db(self) -> None:
+        """Actualiza filas de la UI con datos persistidos en BD."""
+        if not self.table_mgr:
+            return
+
+        db = self.handles.runtime.db
+        for row in self.rows.values():
+            if row.renglon_pk is None:
+                continue
+
+            excel = db.get_renglon_excel(renglon_id=row.renglon_pk)
+            if excel:
+                row.unidad_medida = excel.get("unidad_medida")
+                row.cantidad = excel.get("cantidad")
+                row.marca = excel.get("marca")
+                row.obs_usuario = excel.get("obs_usuario")
+                row.conv_usd = excel.get("conv_usd")
+                row.costo_unit_usd = excel.get("costo_unit_usd")
+                row.costo_total_usd = excel.get("costo_total_usd")
+                row.costo_unit_ars = excel.get("costo_unit_ars")
+                row.costo_total_ars = excel.get("costo_total_ars")
+                row.renta_minima = excel.get("renta_minima")
+                row.precio_referencia = excel.get("precio_referencia")
+                row.precio_ref_unitario = excel.get("precio_ref_unitario")
+                row.renta_referencia = excel.get("renta_referencia")
+                row.precio_unit_aceptable = excel.get("precio_unit_aceptable")
+                row.precio_total_aceptable = excel.get("precio_total_aceptable")
+                row.precio_unit_mejora = excel.get("precio_unit_mejora")
+                row.renta_para_mejorar = excel.get("renta_para_mejorar")
+                row.oferta_para_mejorar = excel.get("oferta_para_mejorar")
+                row.obs_cambio = excel.get("obs_cambio")
+
+            cfg = db.get_renglon_config(renglon_id=row.renglon_pk)
+            if cfg:
+                row.seguir = bool(cfg.get("seguir"))
+                row.oferta_mia = bool(cfg.get("oferta_mia"))
+
+            row_values = DisplayValues.build_row_values(row)
+            self.table_mgr.render_row(row.id_renglon, row_values, RowStyle.NORMAL.value)
+
+        self._apply_filters()
 
     def on_stop(self) -> None:
         """Detiene la aplicación."""
         self.handles.runtime.stop()
+        self.logger.log("⏹️  Deteniendo sistema...")
 
     def on_start_browser(self) -> None:
-        """Inicia collector Playwright si está disponible."""
-        if self.handles.mode != "PLAYWRIGHT":
-            self.logger.log("Modo actual no es PLAYWRIGHT.")
-            return
+        """Inicia collector según el modo (agnóstico a PLAYWRIGHT/MOCK)."""
         try:
             self.handles.runtime.start_collector()
-            self.logger.log("Collector Playwright iniciado por usuario.")
+            self.logger.log(f"✅ Collector iniciado en modo {self.handles.mode}.")
         except Exception as e:
-            messagebox.showerror("Error", f"No se pudo abrir navegador: {e}")
+            messagebox.showerror("❌ Error", f"No se pudo iniciar collector: {e}")
 
     def on_edit_row(self) -> None:
         """Abre diálogo de edición para renglón seleccionado."""
         rid = self.table_mgr.get_selected_row_id()
         if not rid:
-            messagebox.showwarning("Atención", "Seleccioná un renglón.")
+            messagebox.showwarning("⚠️  Atención", "Seleccioná un renglón de la tabla para editar.")
             return
         
         row = self.rows.get(rid)
         if not row:
-            messagebox.showwarning("Atención", "Renglón no encontrado.")
+            messagebox.showwarning("⚠️  Atención", "Renglón no encontrado en memoria.")
             return
         
         dialog = RowEditorDialog(self, row, self.handles.runtime, self.table_mgr)
         dialog.show()
 
     def on_cleanup(self) -> None:
-        """Abre diálogo de limpieza de datos."""
-        choice = messagebox.askyesnocancel(
-            "Liberar espacio",
-            "Sí = solo logs\nTodo = logs + subastas + costos\nCancelar = no hacer nada",
-        )
-        if choice is None:
-            return
+        """Abre diálogo de limpieza de datos con tema LIGHT."""
+        # Crear diálogo profesional
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("🗑️  Liberar Espacio")
+        dialog.geometry("480x420")
+        dialog.resizable(False, False)
         
-        if choice is True:
-            try:
-                self.handles.runtime.cleanup_data(mode="logs")
-                self.logger.log("Logs limpiados.")
-            except Exception as e:
-                messagebox.showerror("Error", f"No se pudieron limpiar logs: {e}")
-            return
+        # Hacer que la ventana sea siempre sobre la principal
+        dialog.transient(self)
+        
+        # Centrar en pantalla
+        dialog.update_idletasks()
+        parent_x = self.winfo_x()
+        parent_y = self.winfo_y()
+        parent_w = self.winfo_width()
+        parent_h = self.winfo_height()
+        
+        x = parent_x + (parent_w - 480) // 2
+        y = parent_y + (parent_h - 420) // 2
+        dialog.geometry(f"480x420+{x}+{y}")
 
-        # Limpiar estados (logs + subastas + costos)
-        try:
-            self.handles.runtime.cleanup_data(mode="states")
-            self.table_mgr.clear()  # Limpiar tabla también
-            self.rows.clear()
-            self.logger.log("Logs, subastas y costos limpiados.")
-        except Exception as e:
-            messagebox.showerror("Error", f"No se pudo limpiar datos: {e}")
-            return
+        # Header con tema LIGHT
+        header = ctk.CTkFrame(dialog, fg_color="#F5F5F5", corner_radius=0)
+        header.pack(fill="x", padx=0, pady=0)
 
-        reset = messagebox.askyesno(
-            "Reset total",
-            "¿Querés borrar también la configuración de la UI?",
+        ctk.CTkLabel(
+            header,
+            text="🗑️  Liberar Espacio",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            text_color="#1A1A1A",
+        ).pack(anchor="w", padx=20, pady=(15, 5))
+
+        ctk.CTkLabel(
+            header,
+            text="Selecciona qué datos deseas limpiar",
+            font=ctk.CTkFont(size=10),
+            text_color="#666666",
+        ).pack(anchor="w", padx=20, pady=(0, 15))
+
+        # Separator
+        sep = ctk.CTkFrame(header, height=1, fg_color="#E0E0E0")
+        sep.pack(fill="x")
+
+        # Opciones - LIGHT bg
+        frame = ctk.CTkFrame(dialog, fg_color="#FFFFFF")
+        frame.pack(fill="both", expand=True, padx=20, pady=20)
+
+        # Opción 1: Solo logs
+        btn1 = ctk.CTkButton(
+            frame,
+            text="📋 Limpiar Solo Logs",
+            command=lambda: self._do_cleanup("logs", dialog),
+            fg_color="#FFA500",
+            hover_color="#FFB84D",
+            text_color="#FFFFFF",
+            height=44,
         )
-        if reset:
-            try:
-                self.handles.runtime.cleanup_data(mode="all")
-                self.logger.log("Reset total realizado.")
-            except Exception as e:
-                messagebox.showerror("Error", f"No se pudo hacer reset total: {e}")
+        btn1.pack(fill="x", pady=(0, 8))
+
+        ctk.CTkLabel(
+            frame,
+            text="Borra solo los registros de logs.",
+            font=ctk.CTkFont(size=9),
+            text_color="#555555",
+        ).pack(anchor="w", pady=(0, 12))
+
+        # Opción 2: Logs + datos
+        btn2 = ctk.CTkButton(
+            frame,
+            text="📊 Limpiar Logs + Subastas + Costos",
+            command=lambda: self._do_cleanup("states", dialog),
+            fg_color="#F44336",
+            hover_color="#EF5350",
+            text_color="#FFFFFF",
+            height=44,
+        )
+        btn2.pack(fill="x", pady=(0, 8))
+
+        ctk.CTkLabel(
+            frame,
+            text="Borra logs, historial de subastas y datos de costos.",
+            font=ctk.CTkFont(size=9),
+            text_color="#555555",
+        ).pack(anchor="w", pady=(0, 12))
+
+        # Opción 3: Reset total
+        btn3 = ctk.CTkButton(
+            frame,
+            text="🔄 Reset Total",
+            command=lambda: self._do_cleanup("all", dialog),
+            fg_color="#D32F2F",
+            hover_color="#E53935",
+            text_color="#FFFFFF",
+            height=44,
+        )
+        btn3.pack(fill="x", pady=(0, 8))
+
+        ctk.CTkLabel(
+            frame,
+            text="⚠️  Borra TODA la configuración, UI incluida. NO SE PUEDE DESHACER.",
+            font=ctk.CTkFont(size=9, weight="bold"),
+            text_color="#D32F2F",
+        ).pack(anchor="w", pady=(0, 12))
+
+        # Footer
+        footer = ctk.CTkFrame(dialog, fg_color="#F5F5F5", corner_radius=0)
+        footer.pack(fill="x", padx=0, pady=0)
+
+        sep2 = ctk.CTkFrame(footer, height=1, fg_color="#E0E0E0")
+        sep2.pack(fill="x")
+
+        btns = ctk.CTkFrame(footer, fg_color="#F5F5F5")
+        btns.pack(fill="x", padx=20, pady=15)
+
+        ctk.CTkButton(
+            btns,
+            text="❌ Cancelar",
+            command=dialog.destroy,
+            fg_color="#E0E0E0",
+            hover_color="#D0D0D0",
+            text_color="#1A1A1A",
+            width=150,
+        ).pack(side="right", padx=6)
+
+    def _do_cleanup(self, mode: str, dialog) -> None:
+        """Ejecuta limpieza con confirmación adicional."""
+        if mode == "all":
+            if not messagebox.askyesno(
+                "⚠️  ADVERTENCIA",
+                "¿REALMENTE deseas hacer un RESET TOTAL?\nNo se puede deshacer.",
+            ):
+                return
+
+        try:
+            self.handles.runtime.cleanup_data(mode=mode)
+
+            if mode == "logs":
+                self.logger.log("🗑️  Logs limpiados exitosamente.")
+                messagebox.showinfo("✅ Éxito", "Logs limpiados.")
+            elif mode == "states":
+                self.table_mgr.clear()
+                self.rows.clear()
+                self.logger.log("🗑️  Logs, subastas y costos limpiados exitosamente.")
+                messagebox.showinfo("✅ Éxito", "Datos limpiados. Tabla vaciada.")
+            elif mode == "all":
+                self.table_mgr.clear()
+                self.rows.clear()
+                self.logger.log("🔄 Reset total realizado.")
+                messagebox.showinfo("✅ Éxito", "Reset total completado. Reinicia la aplicación.")
+
+            dialog.destroy()
+        except Exception as e:
+            messagebox.showerror("❌ Error", f"No se pudo limpiar: {e}")
 
     def on_export_excel(self) -> None:
         """Abre diálogo para exportar datos a Excel."""
@@ -235,9 +616,10 @@ class App(ctk.CTk):
             return
         try:
             self.handles.runtime.export_excel(out_path=path)
-            self.logger.log(f"Excel exportado: {path}")
+            self.logger.log(f"📤 Excel exportado: {path}")
+            messagebox.showinfo("✅ Éxito", f"Archivo exportado:\n{path}")
         except Exception as e:
-            messagebox.showerror("Error", f"No se pudo exportar Excel: {e}")
+            messagebox.showerror("❌ Error", f"No se pudo exportar Excel:\n{e}")
 
     def on_import_excel(self) -> None:
         """Abre diálogo para importar datos desde Excel."""
@@ -249,6 +631,82 @@ class App(ctk.CTk):
             return
         try:
             updated = self.handles.runtime.import_excel(file_path=path)
-            self.logger.log(f"Excel importado: {updated} filas actualizadas")
+            self.logger.log(f"📥 Excel importado: {updated} filas actualizadas")
+            
+            # Refrescar UI con datos persistidos (inmediato)
+            self._refresh_rows_from_db()
+            
+            # Forzar captura inmediata para refrescar UI con datos del collector
+            self.collector_cmd_q.put({"cmd": "capture_current"})
+            
+            messagebox.showinfo("✅ Éxito", f"Se importaron {updated} filas correctamente.\n\nActualizando datos...")
         except Exception as e:
-            messagebox.showerror("Error", f"No se pudo importar Excel: {e}")
+            messagebox.showerror("❌ Error", f"No se pudo importar Excel:\n{e}")
+    # -------------------------
+    # Zoom / Escalado Visual
+    # -------------------------
+    def _zoom_in(self) -> None:
+        """Aumenta el zoom de la UI (Ctrl+Plus)."""
+        self.zoom_level = min(self.zoom_level + 0.1, 2.0)  # Max 200%
+        self._apply_zoom()
+        self.logger.log(f"🔍 Zoom: {int(self.zoom_level * 100)}%")
+    
+    def _zoom_out(self) -> None:
+        """Disminuye el zoom de la UI (Ctrl+Minus)."""
+        self.zoom_level = max(self.zoom_level - 0.1, 0.8)  # Min 80%
+        self._apply_zoom()
+        self.logger.log(f"🔍 Zoom: {int(self.zoom_level * 100)}%")
+    
+    def _zoom_reset(self) -> None:
+        """Resetea el zoom a 100% (Ctrl+0)."""
+        self.zoom_level = 1.0
+        self._apply_zoom()
+        self.logger.log("🔍 Zoom: 100% (resetado)")
+    
+    def _apply_zoom(self) -> None:
+        """
+        Aplica el zoom a todos los elementos escalables.
+        
+        Reescala:
+        - Fuentes de labels, botones, etc.
+        - Tamaño de filas en treeview
+        - Padding y espacios
+        """
+        # Recalcular tamaño de fuente base
+        base_size = 11
+        new_size = max(8, int(base_size * self.zoom_level))
+        
+        # Recalcular altura de filas (para headers más visibles con wrap)
+        # Base: 40px para acomodar wraplength 100 (múltiples líneas)
+        new_row_height = max(30, int(40 * self.zoom_level))
+        
+        # Recalcular wrap length proporcionalmente (base 100 para forzar quiebres)
+        new_wrap_length = max(70, int(100 * self.zoom_level))
+        
+        # Calcular padding escalado
+        padding_v = max(5, int(15 * self.zoom_level))
+        padding_h = 5
+        
+        # Actualizar fuentes en componentes principales
+        try:
+            # Fuente de tabla
+            if self.table_mgr and self.table_mgr.tree:
+                style = ttk.Style()
+                style.configure('Treeview', font=("Segoe UI", new_size), rowheight=new_row_height)
+                style.configure('Treeview.Heading', 
+                               font=("Segoe UI", new_size, "bold"), 
+                               wraplength=new_wrap_length,
+                               padding=(padding_h, padding_v))
+            
+            # Fuente de logger
+            if self.logger and hasattr(self.logger, 'text_widget'):
+                self.logger.text_widget.configure(font=("Courier New", new_size))
+            
+            # Actualizar labels de status
+            if self.lbl_status:
+                self.lbl_status.configure(font=("Segoe UI", new_size))
+            
+            # Log de cambio de zoom
+        except Exception as e:
+            # Silenciosamente fallar si hay problemas con fuentes
+            pass

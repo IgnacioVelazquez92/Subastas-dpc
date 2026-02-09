@@ -38,72 +38,67 @@ class RowCalculator:
     
     @staticmethod
     def calculate_costo_usd(
-        costo_final_pesos: float,
-        conversion_usd: float
+        costo_unit_ars: float,
+        conv_usd: float
     ) -> float | None:
-        """Costo en USD = Costo Final / Conversión."""
-        return RowCalculator.safe_div(costo_final_pesos, conversion_usd)
+        """Costo en USD = Costo Unit ARS / Conversión."""
+        return RowCalculator.safe_div(costo_unit_ars, conv_usd)
     
     @staticmethod
-    def calculate_subtotal_costo(
+    def calculate_costo_total_ars(
         cantidad: float,
-        costo_final_pesos: float
+        costo_unit_ars: float
     ) -> float | None:
-        """Subtotal costo = Cantidad × Costo Final."""
-        return RowCalculator.safe_mul(cantidad, costo_final_pesos)
+        """Costo Total ARS = Cantidad × Costo Unit ARS."""
+        return RowCalculator.safe_mul(cantidad, costo_unit_ars)
     
     @staticmethod
-    def calculate_p_unit_minimo(
-        renta: float,
-        costo_final_pesos: float
+    def calculate_precio_unit_aceptable(
+        renta_minima: float,
+        costo_unit_ars: float
     ) -> float | None:
-        """P. Unit Mínimo = Renta × Costo Final."""
-        return RowCalculator.safe_mul(renta, costo_final_pesos)
+        """Precio Unit Aceptable = (1 + Renta Mínima) × Costo Unit ARS.
+        
+        renta_minima es fracción (0.1 = 10%, 0.3 = 30%)
+        """
+        if renta_minima is None or costo_unit_ars is None:
+            return None
+        return (1.0 + renta_minima) * costo_unit_ars
     
     @staticmethod
-    def calculate_subtotal(
+    def calculate_precio_total_aceptable(
         cantidad: float,
-        p_unit_minimo: float
+        precio_unit_aceptable: float
     ) -> float | None:
-        """Subtotal = Cantidad × P. Unit Mínimo."""
-        return RowCalculator.safe_mul(cantidad, p_unit_minimo)
+        """Precio Total Aceptable = Cantidad × Precio Unit Aceptable."""
+        return RowCalculator.safe_mul(cantidad, precio_unit_aceptable)
     
     @staticmethod
-    def calculate_renta_ref(
+    def calculate_renta_referencia(
         precio_ref: float,
-        costo_final_pesos: float
+        costo_unit_ars: float
     ) -> float | None:
-        """Renta Ref = (Precio Ref / Costo Final) - 1."""
-        result = RowCalculator.safe_div(precio_ref, costo_final_pesos)
+        """Renta Referencia = (Precio Ref / Costo Unit ARS) - 1."""
+        result = RowCalculator.safe_div(precio_ref, costo_unit_ars)
         if result is None:
             return None
         return result - 1.0
     
     @staticmethod
-    def calculate_p_unit_mejora(
-        subtotal_mejorar: float,
+    def calculate_precio_unit_mejora(
+        oferta_para_mejorar: float,
         cantidad: float
     ) -> float | None:
-        """P. Unit Mejora = Subtotal Mejorar / Cantidad."""
-        return RowCalculator.safe_div(subtotal_mejorar, cantidad)
+        """Precio Unit Mejora = Oferta Para Mejorar / Cantidad."""
+        return RowCalculator.safe_div(oferta_para_mejorar, cantidad)
     
     @staticmethod
-    def calculate_dif_unit(
-        p_unit_mejora: float,
-        costo_final_pesos: float
+    def calculate_renta_para_mejorar(
+        precio_unit_mejora: float,
+        costo_unit_ars: float
     ) -> float | None:
-        """Dif Unit = P. Unit Mejora - Costo Final Pesos."""
-        if p_unit_mejora is None or costo_final_pesos is None:
-            return None
-        return p_unit_mejora - costo_final_pesos
-    
-    @staticmethod
-    def calculate_renta_dpc(
-        p_unit_mejora: float,
-        costo_final_pesos: float
-    ) -> float | None:
-        """Renta DPC = (P. Unit Mejora / Costo Final) - 1."""
-        result = RowCalculator.safe_div(p_unit_mejora, costo_final_pesos)
+        """Renta Para Mejorar = (Precio Unit Mejora / Costo Unit ARS) - 1."""
+        result = RowCalculator.safe_div(precio_unit_mejora, costo_unit_ars)
         if result is None:
             return None
         return result - 1.0
@@ -144,176 +139,427 @@ class RowEditorDialog:
         self._build_dialog()
     
     def _build_dialog(self) -> None:
-        """Construye estructura del diálogo."""
+        """Construye diálogo con tema LIGHT y mejor UX."""
         self.win = ctk.CTkToplevel(self.parent)
-        self.win.title(f"Editar renglón {self.row.id_renglon}")
-        self.win.geometry("520x520")
+        self.win.title(f"Editar: {self.row.desc}")
+        self.win.geometry("600x700")
+        self.win.resizable(True, True)
+        
+        # Hacer que la ventana sea siempre sobre la principal
+        self.win.transient(self.parent)
+        
+        # Centrar en pantalla relative a la ventana principal
+        self.win.update_idletasks()
+        parent_x = self.parent.winfo_x()
+        parent_y = self.parent.winfo_y()
+        parent_w = self.parent.winfo_width()
+        parent_h = self.parent.winfo_height()
+        
+        x = parent_x + (parent_w - 600) // 2
+        y = parent_y + (parent_h - 700) // 2
+        self.win.geometry(f"600x700+{x}+{y}")
+        
+        # Body principal - TEMA CLARO
+        body = ctk.CTkFrame(self.win, fg_color="#FFFFFF")
+        body.pack(fill="both", expand=True)
+        
+        # Header
+        header = ctk.CTkFrame(body, fg_color="#F5F5F5", corner_radius=0)
+        header.pack(fill="x", padx=0, pady=0)
+        
+        ctk.CTkLabel(
+            header,
+            text=f"📋 {self.row.desc}",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            text_color="#1A1A1A",
+        ).pack(anchor="w", padx=20, pady=(15, 5))
+        
+        ctk.CTkLabel(
+            header,
+            text=f"ID: {self.row.id_renglon} • Qty: {self.row.cantidad or 'N/A'}",
+            font=ctk.CTkFont(size=10),
+            text_color="#666666",
+        ).pack(anchor="w", padx=20, pady=(0, 15))
+        
+        # Separator
+        sep = ctk.CTkFrame(header, height=1, fg_color="#DDDDDD")
+        sep.pack(fill="x")
         
         # Canvas con scroll
-        canvas = tk.Canvas(self.win, highlightthickness=0)
-        canvas.pack(side="left", fill="both", expand=True, padx=10, pady=10)
+        canvas = tk.Canvas(
+            body,
+            highlightthickness=0,
+            bg="#FFFFFF",
+            relief="flat",
+            borderwidth=0,
+        )
+        canvas.pack(side="left", fill="both", expand=True)
         
-        scroll = ttk.Scrollbar(self.win, orient="vertical", command=canvas.yview)
+        scroll = ttk.Scrollbar(body, orient="vertical", command=canvas.yview)
         scroll.pack(side="right", fill="y")
         canvas.configure(yscrollcommand=scroll.set)
         
-        frame = ctk.CTkFrame(canvas)
+        frame = ctk.CTkFrame(canvas, fg_color="#FFFFFF")
         frame_id = canvas.create_window((0, 0), window=frame, anchor="nw")
         
         def on_frame_config(_ev=None):
             canvas.configure(scrollregion=canvas.bbox("all"))
-            canvas.itemconfig(frame_id, width=canvas.winfo_width())
+            if canvas.winfo_width() > 1:
+                canvas.itemconfig(frame_id, width=canvas.winfo_width())
         
         frame.bind("<Configure>", on_frame_config)
         
         # Cargar config
         cfg = self.db_runtime.get_renglon_config(renglon_id=self.row.renglon_pk) or {}
         
-        # Campos
+        # Secciones de campos
+        self._build_section(frame, "Datos Generales")
         self._add_entry(frame, "Unidad de medida", "unidad_medida", self.row.unidad_medida)
-        
-        qty_txt = "" if self.row.cantidad is None else str(self.row.cantidad)
-        ctk.CTkLabel(frame, text=f"Cantidad (subasta): {qty_txt}").pack(anchor="w")
-        
         self._add_entry(frame, "Marca", "marca", self.row.marca)
         
-        ctk.CTkLabel(frame, text="Observaciones").pack(anchor="w")
-        txt_obs = tk.Text(frame, height=4)
-        txt_obs.pack(fill="x", pady=(0, 6))
-        if self.row.observaciones:
-            txt_obs.insert("1.0", self.row.observaciones)
-        self.entries["observaciones"] = txt_obs
+        self._build_section(frame, "Observaciones Usuario")
+        ctk.CTkLabel(
+            frame,
+            text="Observaciones Usuario",
+            text_color="#1A1A1A",
+            font=ctk.CTkFont(size=10, weight="bold"),
+        ).pack(anchor="w", padx=20, pady=(15, 8))
         
-        self._add_entry(frame, "Conversión USD", "conversion_usd", self.row.conversion_usd)
-        self._add_entry(frame, "Costo final pesos", "costo_final_pesos", self.row.costo_final_pesos)
-        self._add_entry(frame, "Renta", "renta", self.row.renta)
+        txt_obs = tk.Text(
+            frame,
+            height=4,
+            bg="#F9F9F9",
+            fg="#1A1A1A",
+            insertbackground="#1A1A1A",
+            font=("Segoe UI", 10),
+            relief="solid",
+            borderwidth=1,
+        )
+        txt_obs.pack(fill="x", padx=20, pady=(0, 15))
+        if self.row.obs_usuario:
+            txt_obs.insert("1.0", self.row.obs_usuario)
+        self.entries["obs_usuario"] = txt_obs
         
-        utilidad_min_pct = cfg.get("utilidad_min_pct", "")
-        self._add_entry(frame, "Utilidad min %", "utilidad_min_pct", utilidad_min_pct)
+        self._build_section(frame, "Costos & Conversión")
+        self._add_entry(
+            frame,
+            "Conversión USD",
+            "conv_usd",
+            self.row.conv_usd,
+            help="$ pesos por 1 USD",
+        )
+        self._add_entry(
+            frame,
+            "Costo Unit ARS",
+            "costo_unit_ars",
+            self.row.costo_unit_ars,
+            help="Costo unitario en pesos argentinos",
+        )
+        self._add_entry(
+            frame,
+            "Costo Total ARS",
+            "costo_total_ars",
+            self.row.costo_total_ars,
+            help="Costo total en pesos argentinos",
+        )
         
-        # Botones
-        btns = ctk.CTkFrame(self.win)
-        btns.pack(fill="x", padx=10, pady=(0, 10))
+        self._build_section(frame, "Rentabilidad")
         
-        ctk.CTkButton(btns, text="Guardar", command=self._save).pack(side="left", padx=6)
-        ctk.CTkButton(btns, text="Cancelar", command=self.win.destroy).pack(side="right", padx=6)
+        # Mostrar renta_minima como fraccion (0-1) para evitar ambiguedad
+        renta_display = None
+        if self.row.renta_minima is not None:
+            renta_display = f"{self.row.renta_minima:.2f}"
+        
+        self._add_entry(
+            frame,
+            "Renta Mínima (0 a 1)",
+            "renta_minima",
+            renta_display,
+            help="🔢 Ingrese un valor entre 0 y 1 (ej: 0.30 para 30%, 0.15 para 15%).",
+        )
+        
+        self._build_section(frame, "Control de Seguimiento")
+        
+        # 🔥 Checkbox para marcar "Seguir este renglón"
+        check_frame = ctk.CTkFrame(frame, fg_color="transparent")
+        check_frame.pack(fill="x", padx=20, pady=(8, 15))
+        
+        self.check_seguir = tk.BooleanVar(value=bool(cfg.get("seguir", False)))
+        ctk.CTkCheckBox(
+            check_frame,
+            text="✅ Seguir este renglón (activa alertas)",
+            variable=self.check_seguir,
+            onvalue=True,
+            offvalue=False,
+            text_color="#1A1A1A",
+            fg_color="#4CAF50",
+            checkmark_color="#FFFFFF",
+            font=ctk.CTkFont(size=11),
+        ).pack(anchor="w", padx=0, pady=6)
+        
+        ctk.CTkLabel(
+            check_frame,
+            text="💡 Al activar, recibirás notificaciones cuando cambie el precio o la oferta.",
+            font=ctk.CTkFont(size=9),
+            text_color="#999999",
+        ).pack(anchor="w", pady=(4, 0))
+        
+        # Botones - Footer
+        footer = ctk.CTkFrame(self.win, fg_color="#F5F5F5", corner_radius=0)
+        footer.pack(fill="x", padx=20, pady=(12, 15))
+        
+        btns_left = ctk.CTkFrame(footer, fg_color="transparent")
+        btns_left.pack(side="left")
+        
+        ctk.CTkButton(
+            btns_left,
+            text="✅ Guardar",
+            command=self._save,
+            fg_color="#4CAF50",
+            hover_color="#45a049",
+            text_color="#FFFFFF",
+            width=120,
+            height=36,
+        ).pack(side="left", padx=6)
+        
+        ctk.CTkButton(
+            btns_left,
+            text="❌ Cancelar",
+            command=self.win.destroy,
+            fg_color="#E0E0E0",
+            hover_color="#D0D0D0",
+            text_color="#1A1A1A",
+            width=120,
+            height=36,
+        ).pack(side="left", padx=6)
+    
+    def _build_section(self, parent, title: str) -> None:
+        """Crea un separador/sección con tema claro."""
+        sep = ctk.CTkFrame(parent, height=1, fg_color="#E0E0E0")
+        sep.pack(fill="x", padx=20, pady=(16, 10))
+        
+        ctk.CTkLabel(
+            parent,
+            text=title,
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color="#1A7F00",
+        ).pack(anchor="w", padx=20, pady=(0, 8))
     
     def _add_entry(
         self,
         parent,
         label: str,
         key: str,
-        value: str | float | None = None
+        value: str | float | None = None,
+        help: str = "",
+        required: bool = False,
     ) -> None:
-        """Crea label + entry field."""
-        ctk.CTkLabel(parent, text=label).pack(anchor="w")
-        ent = ctk.CTkEntry(parent)
-        ent.pack(fill="x", pady=(0, 6))
+        """Crea label + entry field con tema claro."""
+        frame = ctk.CTkFrame(parent, fg_color="transparent")
+        frame.pack(fill="x", padx=20, pady=(0, 12))
+        
+        label_text = f"{label}" + (" *" if required else "")
+        ctk.CTkLabel(
+            frame,
+            text=label_text,
+            font=ctk.CTkFont(size=10, weight="bold"),
+            text_color="#333333" if not required else "#FF7043",
+        ).pack(anchor="w")
+        
+        ent = ctk.CTkEntry(
+            frame,
+            height=36,
+            font=ctk.CTkFont(size=11),
+            fg_color="#F9F9F9",
+            text_color="#1A1A1A",
+            border_color="#CCCCCC",
+            border_width=1,
+        )
+        ent.pack(fill="x", pady=(6, 0))
         if value is not None:
             ent.insert(0, str(value))
         self.entries[key] = ent
+        
+        if help:
+            ctk.CTkLabel(
+                frame,
+                text=f"💡 {help}",
+                font=ctk.CTkFont(size=9),
+                text_color="#999999",
+            ).pack(anchor="w", pady=(4, 0))
     
     def _save(self) -> None:
-        """Guarda los cambios."""
+        """Guarda los cambios con validación mejorada."""
         # Parsear valores
         unidad_medida = self.entries["unidad_medida"].get().strip() or None
         marca = self.entries["marca"].get().strip() or None
-        observaciones = self.entries["observaciones"].get("1.0", "end").strip() or None
-        conversion_usd = self.fmt.parse_float(self.entries["conversion_usd"].get())
-        costo_final_pesos = self.fmt.parse_float(self.entries["costo_final_pesos"].get())
-        renta = self.fmt.parse_float(self.entries["renta"].get())
-        utilidad_min_pct = self.fmt.parse_float(self.entries["utilidad_min_pct"].get())
+        obs_usuario = self.entries["obs_usuario"].get("1.0", "end").strip() or None
+        conv_usd = self.fmt.parse_float(self.entries["conv_usd"].get())
+        costo_unit_ars = self.fmt.parse_float(self.entries["costo_unit_ars"].get())
+        costo_total_ars = self.fmt.parse_float(self.entries["costo_total_ars"].get())
         
-        # Validaciones
-        if costo_final_pesos is None or costo_final_pesos <= 0:
-            messagebox.showwarning("Atención", "COSTO FINAL PESOS debe ser > 0.")
+        # Renta minima en fraccion (0-1)
+        renta_minima_input = self.fmt.parse_float(self.entries["renta_minima"].get())
+        renta_minima = None
+        utilidad_min_pct = None  # Se deriva de renta_minima (mismo valor)
+
+        if renta_minima_input is not None:
+            renta_minima = renta_minima_input
+            utilidad_min_pct = renta_minima_input * 100
+        
+        # Validaciones con mensajes claros
+        if costo_unit_ars is None and costo_total_ars is None:
+            messagebox.showerror(
+                "❌ Validación",
+                "Debe ingresar al menos COSTO UNIT ARS o COSTO TOTAL ARS.",
+            )
             return
         
-        if renta is not None and renta < 0:
-            messagebox.showwarning("Atención", "RENTA no puede ser negativa.")
+        if costo_unit_ars is not None and costo_unit_ars <= 0:
+            messagebox.showerror(
+                "❌ Validación",
+                "COSTO UNIT ARS debe ser mayor a 0.",
+            )
             return
+        
+        if costo_total_ars is not None and costo_total_ars <= 0:
+            messagebox.showerror(
+                "❌ Validación",
+                "COSTO TOTAL ARS debe ser mayor a 0.",
+            )
+            return
+        
+        if renta_minima is not None and renta_minima < 0:
+            messagebox.showerror(
+                "❌ Validación",
+                f"RENTA MINIMA debe ser al menos 0.0 (0% utilidad).\n\nValor recibido: {renta_minima:.2f}\n\n💡 Ingrese un numero entre 0 y 1 (ej: 0.30 para 30%)",
+            )
+            return
+        if renta_minima is not None and renta_minima > 1:
+            messagebox.showerror(
+                "❌ Validación",
+                f"RENTA MINIMA debe estar entre 0 y 1 (ej: 0.30 para 30%).\n\nValor recibido: {renta_minima:.2f}",
+            )
+            return
+        
+        if conv_usd is not None and conv_usd <= 0:
+            messagebox.showwarning(
+                "⚠️  Advertencia",
+                "CONVERSIÓN USD debe ser > 0 para cálculos correctos.",
+            )
         
         # Guardar en DB
-        if utilidad_min_pct is not None:
+        seguir = self.check_seguir.get()
+        if utilidad_min_pct is not None or seguir:
             self.db_runtime.update_renglon_config(
                 renglon_id=self.row.renglon_pk,
                 utilidad_min_pct=utilidad_min_pct,
+                seguir=seguir,
             )
+        
+        # 🔥 Recalcular campos derivados ANTES de guardar (para incluir USD)
+        self._recalculate_derived_fields(
+            conv_usd, costo_unit_ars, costo_total_ars, renta_minima
+        )
+        
+        # Obtener USD recalculados de self.row
+        costo_unit_usd = self.row.costo_unit_usd
+        costo_total_usd = self.row.costo_total_usd
         
         self.db_runtime.update_renglon_excel(
             renglon_id=self.row.renglon_pk,
             unidad_medida=unidad_medida,
             marca=marca,
-            observaciones=observaciones,
-            conversion_usd=conversion_usd,
-            costo_final_pesos=costo_final_pesos,
-            renta=renta,
+            obs_usuario=obs_usuario,
+            conversion_usd=conv_usd,
+            costo_unit_ars=costo_unit_ars,
+            costo_total_ars=costo_total_ars,
+            costo_unit_usd=costo_unit_usd,
+            costo_total_usd=costo_total_usd,
+            renta_minima=renta_minima,
         )
         
-        # Recalcular campos derivados
-        self._recalculate_derived_fields(
-            conversion_usd, costo_final_pesos, renta
-        )
+        # 🎯 LOGGING: Mostrar lo que se guardó
+        print(f"\n{'='*60}")
+        print(f"[USUARIO] Editó renglón: {self.row.id_renglon} - {self.row.desc[:50]}")
+        print(f"{'='*60}")
+        print(f"[GUARDADO EN BD]:")
+        if costo_unit_ars:
+            print(f"  costo_unit_ars = {costo_unit_ars:,.2f}")
+        if costo_total_ars:
+            print(f"  costo_total_ars = {costo_total_ars:,.2f}")
+        if costo_unit_usd:
+            print(f"  costo_unit_usd = {costo_unit_usd:,.2f}")
+        if costo_total_usd:
+            print(f"  costo_total_usd = {costo_total_usd:,.2f}")
+        if renta_minima:
+            # Mostrar tanto el valor interno como el % legible
+            pct = (renta_minima - 1.0) * 100 if renta_minima >= 1 else renta_minima * 100
+            print(f"  renta_minima = {renta_minima:.2f} (equivale a {pct:.0f}% utilidad)")
+        if conv_usd:
+            print(f"  conv_usd = {conv_usd:,.2f}")
+        print(f"{'='*60}\n")
         
         # Actualizar row en cache
         self.row.unidad_medida = unidad_medida
         self.row.marca = marca
-        self.row.observaciones = observaciones
-        self.row.conversion_usd = conversion_usd
-        self.row.costo_final_pesos = costo_final_pesos
-        self.row.renta = renta
+        self.row.obs_usuario = obs_usuario
+        self.row.conv_usd = conv_usd
+        self.row.costo_unit_ars = costo_unit_ars
+        self.row.costo_total_ars = costo_total_ars
+        self.row.renta_minima = renta_minima
         
-        # Renderizar
-        style = RowStyle.TRACKED.value if self.row.seguir else RowStyle.NORMAL.value
+        # Renderizar con estilo TRACKED (el engine recalculará el color en el próximo UPDATE)
+        style = RowStyle.TRACKED.value if self.row.seguir or costo_unit_ars else RowStyle.NORMAL.value
         from app.ui.formatters import DisplayValues
         row_values = DisplayValues.build_row_values(self.row)
         self.table_mgr.render_row(self.row.id_renglon, row_values, style)
         
+        messagebox.showinfo("✅ Éxito", f"Se guardaron los cambios a {self.row.desc}")
         self.win.destroy()
     
     def _recalculate_derived_fields(
         self,
-        conversion_usd: float | None,
-        costo_final_pesos: float | None,
-        renta: float | None,
+        conv_usd: float | None,
+        costo_unit_ars: float | None,
+        costo_total_ars: float | None,
+        renta_minima: float | None,
     ) -> None:
         """Recalcula e actualiza campos derivados en row."""
-        # Costo USD
-        self.row.costo_usd = self.calc.calculate_costo_usd(
-            costo_final_pesos, conversion_usd
-        ) if conversion_usd not in (None, 0) and costo_final_pesos else None
+        # Resolver bidirecionaldad costo unit <-> total
+        if costo_total_ars and self.row.cantidad:
+            costo_unit_ars = costo_total_ars / self.row.cantidad
+        elif costo_unit_ars and self.row.cantidad:
+            costo_total_ars = costo_unit_ars * self.row.cantidad
         
-        # Subtotal costo
-        self.row.subtotal_costo_pesos = self.calc.calculate_subtotal_costo(
-            self.row.cantidad, costo_final_pesos
-        ) if self.row.cantidad and costo_final_pesos else None
+        # 🔥 Costo USD (UNITARIO y TOTAL)
+        if conv_usd not in (None, 0):
+            if costo_unit_ars:
+                self.row.costo_unit_usd = costo_unit_ars / conv_usd
+            if costo_total_ars:
+                self.row.costo_total_usd = costo_total_ars / conv_usd
         
-        # P. Unit Mínimo
-        self.row.p_unit_minimo = self.calc.calculate_p_unit_minimo(
-            renta, costo_final_pesos
-        ) if renta and costo_final_pesos else None
+        # Precio Unit Aceptable
+        self.row.precio_unit_aceptable = self.calc.calculate_precio_unit_aceptable(
+            renta_minima, costo_unit_ars
+        ) if renta_minima and costo_unit_ars else None
         
-        # Subtotal
-        self.row.subtotal = self.calc.calculate_subtotal(
-            self.row.cantidad, self.row.p_unit_minimo
-        ) if self.row.cantidad and self.row.p_unit_minimo else None
+        # Precio Total Aceptable
+        self.row.precio_total_aceptable = self.calc.calculate_precio_total_aceptable(
+            self.row.cantidad, self.row.precio_unit_aceptable
+        ) if self.row.cantidad and self.row.precio_unit_aceptable else None
         
-        # Renta Ref
-        self.row.renta_ref = self.calc.calculate_renta_ref(
-            self.row.precio_ref_subasta, costo_final_pesos
-        ) if self.row.precio_ref_subasta and costo_final_pesos else None
+        # Renta Referencia
+        self.row.renta_referencia = self.calc.calculate_renta_referencia(
+            self.row.precio_ref_unitario, costo_unit_ars
+        ) if self.row.precio_ref_unitario and costo_unit_ars else None
         
-        # P. Unit Mejora
-        self.row.p_unit_mejora = self.calc.calculate_p_unit_mejora(
-            self.row.subtotal_para_mejorar, self.row.cantidad
-        ) if self.row.subtotal_para_mejorar and self.row.cantidad else None
+        # Precio Unit Mejora
+        self.row.precio_unit_mejora = self.calc.calculate_precio_unit_mejora(
+            self.row.oferta_para_mejorar, self.row.cantidad
+        ) if self.row.oferta_para_mejorar and self.row.cantidad else None
         
-        # Dif Unit
-        self.row.dif_unit = self.calc.calculate_dif_unit(
-            self.row.p_unit_mejora, costo_final_pesos
-        ) if self.row.p_unit_mejora and costo_final_pesos else None
-        
-        # Renta DPC
-        self.row.renta_dpc = self.calc.calculate_renta_dpc(
-            self.row.p_unit_mejora, costo_final_pesos
-        ) if self.row.p_unit_mejora and costo_final_pesos else None
+        # Renta Para Mejorar
+        self.row.renta_para_mejorar = self.calc.calculate_renta_para_mejorar(
+            self.row.precio_unit_mejora, costo_unit_ars
+        ) if self.row.precio_unit_mejora and costo_unit_ars else None

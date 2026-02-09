@@ -41,34 +41,66 @@ class EventProcessor:
         self.set_status = status_label_setter
         self.log = logger
         self.bell = audio_bell_fn
+        
+        # Callbacks para LEDs (se asignan después en app.py)
+        self.on_offer_changed = None  # Callback para LED de ofertas
+        self.on_http_event = None  # Callback para LED HTTP (status_code)
     
     def process_event(self, ev: Event) -> None:
         """Procesa un evento del motor."""
-        # Log del evento
-        self.log(f"[{ev.level}] {ev.type}: {ev.message}")
-        
         # Despachar por tipo
         if ev.type == EventType.START:
             self.set_status("RUNNING")
+            self.log("▶️  Sistema iniciado - recopilando datos...")
             return
         
         if ev.type == EventType.STOP:
             self.set_status("STOPPED")
+            self.log("⏹️  Sistema detenido")
             return
         
         if ev.type == EventType.END:
             self.set_status("ENDED")
+            self.log("✅ Proceso finalizado")
             return
         
         if ev.type == EventType.SNAPSHOT:
+            # SNAPSHOT implica una petición exitosa (200 OK)
+            try:
+                if callable(self.on_http_event):
+                    self.on_http_event(200)  # Implica éxito
+            except Exception:
+                pass
             self._handle_snapshot(ev)
             return
         
         if ev.type == EventType.UPDATE:
+            # UPDATE también implica una petición exitosa
+            try:
+                if callable(self.on_http_event):
+                    self.on_http_event(200)  # Implica éxito
+            except Exception:
+                pass
             self._handle_update(ev)
             return
         
-        # Otros eventos (HEARTBEAT, HTTP_ERROR) se logean pero no cambian tabla
+        if ev.type == EventType.HTTP_ERROR:
+            payload = ev.payload or {}
+            status = (
+                payload.get("http_status")
+                or payload.get("status_code")
+                or payload.get("status")
+            )
+            self.log(f"🔴 Error HTTP {status}: {ev.message}")
+            # Disparar LED de HTTP con código de error
+            try:
+                if callable(self.on_http_event):
+                    self.on_http_event(int(status) if status is not None else 0)
+            except Exception:
+                pass
+            return
+        
+        # Otros eventos (HEARTBEAT, DEBUG) se ignoran en logs
     
     def _handle_snapshot(self, ev: Event) -> None:
         """Maneja evento SNAPSHOT: reconstruye tabla desde cero."""
@@ -76,6 +108,14 @@ class EventProcessor:
         items = payload.get("renglones") or []
         self.table_mgr.rebuild_from_snapshot(items)
         self.rows_cache.clear()
+
+        # Rehidratar cache para evitar duplicados en el primer UPDATE
+        for item in items:
+            rid = str(item.get("value") or "")
+            if not rid:
+                continue
+            desc = str(item.get("text") or "")
+            self.rows_cache[rid] = UIRow(id_renglon=rid, desc=desc)
     
     def _handle_update(self, ev: Event) -> None:
         """Maneja evento UPDATE: crea o actualiza una fila."""
@@ -90,6 +130,8 @@ class EventProcessor:
         # Obtener o crear fila
         row = self.rows_cache.get(rid)
         is_new = False
+        old_mejor_txt = None
+        old_render_sig = None
         
         if not row:
             row = UIRow(
@@ -97,22 +139,71 @@ class EventProcessor:
                 desc=str(payload.get("desc") or "")
             )
             self.rows_cache[rid] = row
-            self.table_mgr.insert_row(rid, row.desc)
+            if rid not in self.table_mgr.iids:
+                self.table_mgr.insert_row(rid, row.desc)
             is_new = True
+        else:
+            # Rastrear cambios para logs mejorados
+            old_mejor_txt = row.mejor_oferta_txt
+            old_render_sig = self._row_render_signature(row)
         
         # Actualizar campos desde payload
         self._update_row_from_payload(row, payload, ev)
         
-        # Determinar si renderizar
-        should_render = is_new or bool(payload.get("changed", False))
+        # Determinar si renderizar:
+        # - cambios del collector (payload.changed)
+        # - cambios en campos mostrados (usuario/calculados), aunque no cambie la oferta
+        new_render_sig = self._row_render_signature(row)
+        data_changed = (old_render_sig is not None and old_render_sig != new_render_sig)
+        should_render = is_new or bool(payload.get("changed", False)) or data_changed
         
         if should_render:
+            # Log inteligente de cambios
+            if not is_new and old_mejor_txt and old_mejor_txt != row.mejor_oferta_txt:
+                # La mejor oferta cambió - loguear y disparar LED
+                self.log(f"📊 {row.desc}: Oferta {old_mejor_txt} → {row.mejor_oferta_txt}")
+                # Disparar LED de cambios de oferta (será implementado en app.py)
+                try:
+                    if hasattr(self, 'on_offer_changed'):
+                        self.on_offer_changed()
+                except Exception:
+                    pass
+            
             # Aplicar decoraciones (estilo, sonido, etc.)
             style = self._apply_event_decorations(row, payload, ev)
             
             # Renderizar
             row_values = DisplayValues.build_row_values(row)
             self.table_mgr.render_row(rid, row_values, style)
+
+    def _row_render_signature(self, row: UIRow) -> tuple:
+        """Firma compacta de campos visibles para detectar cambios de render."""
+        return (
+            row.desc,
+            row.unidad_medida,
+            row.cantidad,
+            row.marca,
+            row.obs_usuario,
+            row.conv_usd,
+            row.costo_unit_usd,
+            row.costo_total_usd,
+            row.costo_unit_ars,
+            row.costo_total_ars,
+            row.renta_minima,
+            row.precio_referencia,
+            row.precio_ref_unitario,
+            row.renta_referencia,
+            row.precio_unit_aceptable,
+            row.precio_total_aceptable,
+            row.precio_unit_mejora,
+            row.renta_para_mejorar,
+            row.oferta_para_mejorar,
+            row.mejor_oferta_txt,
+            getattr(row, "oferta_min_txt", None),
+            row.obs_cambio,
+            row.seguir,
+            row.oferta_mia,
+        )
     
     def _update_row_from_payload(self, row: UIRow, payload: dict, ev: Event) -> None:
         """Copia datos de payload a UIRow."""
@@ -128,38 +219,39 @@ class EventProcessor:
         row.desc = str(payload.get("desc") or row.desc)
         
         # Campos de oferta
-        row.mejor_txt = payload.get("mejor_oferta_txt")
+        row.mejor_oferta_txt = payload.get("mejor_oferta_txt")
         row.oferta_min_txt = payload.get("oferta_min_txt")
-        row.precio_ref_subasta = payload.get("precio_referencia_subasta")
         
         # Mensaje con timestamp si hay cambio
         msg = str(payload.get("mensaje") or "")
         changed = bool(payload.get("changed", False))
         if changed:
             ts = datetime.now().strftime("%H:%M:%S")
-            row.obs_det = f"{msg} | cambio {ts}" if msg else f"Cambio detectado | {ts}"
+            row.obs_cambio = f"{msg} | cambio {ts}" if msg else f"Cambio detectado | {ts}"
         else:
-            row.obs_det = msg or row.obs_det
+            row.obs_cambio = msg or row.obs_cambio
         
-        # Datos técnicos
+        # Datos técnicos (REFACTORED)
         row.unidad_medida = payload.get("unidad_medida")
         row.cantidad = payload.get("cantidad")
         row.marca = payload.get("marca")
-        row.observaciones = payload.get("observaciones")
-        row.conversion_usd = payload.get("conversion_usd")
-        row.costo_usd = payload.get("costo_usd")
-        row.costo_final_pesos = payload.get("costo_final_pesos")
-        row.renta = payload.get("renta")
+        row.obs_usuario = payload.get("obs_usuario")
+        row.conv_usd = payload.get("conv_usd")
+        row.costo_unit_usd = payload.get("costo_unit_usd")
+        row.costo_total_usd = payload.get("costo_total_usd")
+        row.costo_unit_ars = payload.get("costo_unit_ars")
+        row.costo_total_ars = payload.get("costo_total_ars")
+        row.renta_minima = payload.get("renta_minima")
         
-        # Cálculos derivados
-        row.subtotal_para_mejorar = payload.get("subtotal_para_mejorar")
-        row.subtotal_costo_pesos = payload.get("subtotal_costo_pesos")
-        row.p_unit_minimo = payload.get("p_unit_minimo")
-        row.subtotal = payload.get("subtotal")
-        row.renta_ref = payload.get("renta_ref")
-        row.p_unit_mejora = payload.get("p_unit_mejora")
-        row.dif_unit = payload.get("dif_unit")
-        row.renta_dpc = payload.get("renta_dpc")
+        # Cálculos derivados (REFACTORED)
+        row.precio_referencia = payload.get("precio_referencia")
+        row.precio_ref_unitario = payload.get("precio_ref_unitario")
+        row.renta_referencia = payload.get("renta_referencia")
+        row.precio_unit_aceptable = payload.get("precio_unit_aceptable")
+        row.precio_total_aceptable = payload.get("precio_total_aceptable")
+        row.precio_unit_mejora = payload.get("precio_unit_mejora")
+        row.renta_para_mejorar = payload.get("renta_para_mejorar")
+        row.oferta_para_mejorar = payload.get("oferta_para_mejorar")
         
         # Flags
         row.seguir = bool(payload.get("seguir", row.seguir))

@@ -26,10 +26,20 @@ class DataFormatter:
 
     @staticmethod
     def format_percentage(value: float | None) -> str:
-        """Formatea porcentaje: 12.34%"""
+        """Formatea porcentaje desde fracción: 0.3 -> 30%"""
         if value is None:
             return ""
-        return f"{value:.2f}%"
+        return f"{value * 100:.2f}%"
+    
+    @staticmethod
+    def format_percentage_from_multiplier(value: float | None) -> str:
+        """Formatea porcentaje desde multiplicador: 1.3 -> 30%"""
+        if value is None:
+            return ""
+        if value >= 1.0:
+            return f"{(value - 1.0) * 100:.2f}%"
+        # Si es < 1, probablemente ya sea fracción
+        return f"{value * 100:.2f}%"
 
     @staticmethod
     def format_number(value: float | None, *, decimals: int = 2) -> str:
@@ -116,33 +126,41 @@ class DisplayValues:
         Convierte UIRow a tupla de strings para Treeview.
         
         Espera que row sea un UIRow con todos los atributos.
-        Retorna tupla de 22 strings en orden de self.cols.
+        Retorna tupla de 23 strings en orden de self.cols.
         """
         fmt = DataFormatter
         
         values = (
+            # IDs y b\u00e1sicos
             row.id_subasta or "",
             row.id_renglon,
             fmt.truncate(row.desc, 80),
-            row.unidad_medida or "",
             fmt.format_number(row.cantidad, decimals=2),
+            # Metadata usuario
+            row.unidad_medida or "",
             row.marca or "",
-            fmt.truncate(row.observaciones or "", 40),
-            fmt.format_number(row.conversion_usd, decimals=2),
-            fmt.format_number(row.costo_usd, decimals=2),
-            fmt.format_money(row.costo_final_pesos),
-            fmt.format_money(row.subtotal_costo_pesos),
-            fmt.format_number(row.renta, decimals=4),
-            fmt.format_money(row.p_unit_minimo),
-            fmt.format_money(row.subtotal),
-            fmt.format_percentage(row.renta_ref) if row.renta_ref is not None else "",
-            fmt.format_money(row.p_unit_mejora),
-            fmt.format_money(row.precio_ref_subasta),
-            row.mejor_txt or "",
-            fmt.format_money(row.subtotal_para_mejorar),
-            fmt.format_money(row.dif_unit),
-            fmt.format_percentage(row.renta_dpc) if row.renta_dpc is not None else "",
-            fmt.truncate(row.obs_det or "", 60),
+            fmt.truncate(row.obs_usuario or "", 40),
+            # Costos
+            fmt.format_number(row.conv_usd, decimals=2),
+            fmt.format_number(row.costo_unit_usd, decimals=2),
+            fmt.format_number(row.costo_total_usd, decimals=2),
+            fmt.format_money(row.costo_unit_ars),
+            fmt.format_money(row.costo_total_ars),
+            # Rentabilidad mínima (fracción 0-1)
+            fmt.format_percentage(row.renta_minima) if row.renta_minima is not None else "",
+            fmt.format_money(row.precio_unit_aceptable),
+            fmt.format_money(row.precio_total_aceptable),
+            # Referencia
+            fmt.format_money(row.precio_referencia),
+            fmt.format_money(row.precio_ref_unitario),
+            fmt.format_percentage(row.renta_referencia) if row.renta_referencia is not None else "",
+            # Mejora en subasta
+            row.mejor_oferta_txt or "",
+            fmt.format_money(row.oferta_para_mejorar),
+            fmt.format_money(row.precio_unit_mejora),
+            fmt.format_percentage(row.renta_para_mejorar) if row.renta_para_mejorar is not None else "",
+            # Observaciones
+            fmt.truncate(row.obs_cambio or "", 60),
         )
         
         return values

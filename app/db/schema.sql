@@ -122,25 +122,49 @@ CREATE INDEX IF NOT EXISTS idx_evento_subasta ON evento(subasta_id);
 -- =========================================================
 -- Tabla: renglon_excel
 -- Datos de Excel / usuario por renglon
+-- REFACTORING: Nuevos nombres de columnas para mayor claridad
+-- - observaciones → obs_usuario
+-- - costo_usd → costo_unit_usd (y new: costo_total_usd)
+-- - costo_final_pesos → costo_unit_ars (y new: costo_total_ars)
+-- - renta → renta_minima
+-- NOTA: Mantenemos columnas viejas para backward compatibility durante migración
 -- =========================================================
 CREATE TABLE IF NOT EXISTS renglon_excel (
-    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-    renglon_id           INTEGER NOT NULL UNIQUE,
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    renglon_id              INTEGER NOT NULL UNIQUE,
 
-    unidad_medida        TEXT,
-    cantidad             REAL,
-    marca                TEXT,
-    observaciones        TEXT,
+    unidad_medida           TEXT,
+    cantidad                REAL,
+    marca                   TEXT,
 
-    conversion_usd       REAL,
-    costo_usd            REAL,
+    -- REFACTORED COLUMNS (nuevas)
+    obs_usuario             TEXT,
+    conv_usd                REAL,
+    costo_unit_usd          REAL,
+    costo_total_usd         REAL,
+    costo_unit_ars          REAL,
+    costo_total_ars         REAL,
+    renta_minima            REAL,
+    precio_referencia       REAL,
+    precio_ref_unitario     REAL,
+    renta_referencia        REAL,
+    precio_unit_aceptable   REAL,
+    precio_total_aceptable  REAL,
+    precio_unit_mejora      REAL,
+    renta_para_mejorar      REAL,
+    oferta_para_mejorar     REAL,
+    mejor_oferta_txt        TEXT,
+    obs_cambio              TEXT,
 
-    costo_final_pesos    REAL,
-    renta                REAL,
-    precio_referencia    REAL,
+    -- LEGACY COLUMNS (old, kept for backward compatibility)
+    observaciones           TEXT,
+    conversion_usd          REAL,
+    costo_usd               REAL,
+    costo_final_pesos       REAL,
+    renta                   REAL,
     precio_referencia_subasta REAL,
 
-    updated_at           TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at              TEXT NOT NULL DEFAULT (datetime('now')),
 
     FOREIGN KEY(renglon_id) REFERENCES renglon(id) ON DELETE CASCADE
 );

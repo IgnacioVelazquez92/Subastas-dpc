@@ -7,6 +7,7 @@ Proporciona una **alternativa visual moderna** al portal oficial con:
 - Sistema de alertas configurables
 - Exportación/importación de datos a Excel
 - Persistencia de históricos en SQLite
+- Ordenamiento y filtros rápidos en la UI
 
 ---
 
@@ -41,6 +42,7 @@ python main.py --mode MOCK --scenario "data/test_scenarios/scenario_controlled_r
 - **Seguimiento automático**: Captura cambios de precios cada N segundos
 - **Alertas**: Notificaciones visuales/sonoras ante cambios significativos
 - **Histórico**: Persistencia de todos los cambios en SQLite
+- **USD persistente**: Conversión y costos USD se mantienen en BD y UI
 
 ### Gestión de Datos Excel
 - **Importación**: Carga datos de costos y observaciones desde Excel
@@ -51,6 +53,8 @@ python main.py --mode MOCK --scenario "data/test_scenarios/scenario_controlled_r
 - **Columnas configurables**: Personaliza vista con persistencia en BD
 - **Limpieza de datos**: Gestión de logs y estados históricos
 - **Control de ejecución**: Supervisión del ciclo de vida del monitoreo
+- **Ordenamiento**: Click en headers (incluye Renta a Mejorar %)
+- **Filtros rápidos**: Ocultar vacíos por columna, solo con costo, solo seguimiento
 
 ## 📁 Estructura del Proyecto
 
@@ -155,7 +159,7 @@ monitor_subastas/
 
 ---
 
-## � Instalación
+## 🛠 Instalación
 
 ### Requisitos
 - Python 3.10+
@@ -199,6 +203,28 @@ python main.py --mode MOCK --scenario "data/test_scenarios/scenario_controlled_r
 ```
 
 **Nota**: MOCK es **solo para testing de UI**. En producción el lunes usarás PLAYWRIGHT.
+
+## 🧰 UI: Ordenamiento y Filtros
+
+- **Ordenar por Renta a Mejorar %**: click en el header de la columna `Renta a Mejorar %`.
+- **Ocultar vacías**: permite elegir una columna y ocultar filas sin valor.
+- **Solo con costo**: muestra únicamente renglones con costo unitario o total.
+- **Solo seguimiento**: filtra renglones marcados como seguimiento.
+- **Solo en carrera**: oculta renglones donde `renta_para_mejorar` < `renta_minima` (fuera de umbral).
+
+## 📊 Cómo Hacer Seguimiento
+
+El seguimiento activa alertas visuales/sonoras en un renglón. Para hacerlo:
+
+1. **Selecciona renglón** en la tabla (click)
+2. **Abre Opciones → Editar renglón** (o botón en la barra)
+3. En el diálogo, marca el **checkbox "Seguir este renglón"**
+4. Confirma y guarda
+
+A partir de ese momento:
+- El renglón cambia de estilo a **TRACKED** (fondo celeste)
+- Recibirá alertas si el precio cambia significativamente
+- Filtro **"Solo seguimiento"** lo mantiene visible cuando está activo
 
 ## ℹ️ Información Adicional
 

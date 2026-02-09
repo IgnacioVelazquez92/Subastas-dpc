@@ -125,28 +125,42 @@ class AlertEngine:
                 message="Oferta marcada como mía",
             )
 
-        # 4) Reglas por utilidad (si existe)
+        # 4) Reglas por utilidad (si existe datos para comparar)
+        # REFACTORING: Color coding mejorado
+        # - Verde: utilidad > (renta_minima + 5%)
+        # - Amarillo: utilidad entre renta_minima y (renta_minima + 5%)
+        # - Rojo: utilidad <= renta_minima
         if utilidad_pct is not None:
-            if utilidad_pct < utilidad_min_pct:
-                # debajo de umbral
+            if utilidad_pct >= utilidad_min_pct + 5.0:
+                # ÉXITO: buena utilidad (5% por encima del mínimo)
                 return AlertDecision(
-                    style=RowStyle.DANGER if tracked else RowStyle.NORMAL,
-                    play_sound=SoundCue.NONE,
-                    highlight=False,
-                    hide=bool(ocultar_bajo_umbral),
-                    message=f"Utilidad {utilidad_pct:.2f}% < {utilidad_min_pct:.2f}%",
-                )
-            else:
-                # cumple umbral
-                return AlertDecision(
-                    style=RowStyle.TRACKED if tracked else RowStyle.NORMAL,
+                    style=RowStyle.SUCCESS,
                     play_sound=SoundCue.ALERT if (changed and tracked) else SoundCue.NONE,
                     highlight=bool(changed and tracked),
                     hide=False,
-                    message=f"Utilidad {utilidad_pct:.2f}% OK",
+                    message=f"✓ Utilidad {utilidad_pct:.2f}% (excelente, +{utilidad_pct - utilidad_min_pct:.2f}%)",
+                )
+            elif utilidad_pct >= utilidad_min_pct:
+                # ALERTA: cumple mínimo pero poco margen
+                return AlertDecision(
+                    style=RowStyle.WARNING,
+                    play_sound=SoundCue.NONE,
+                    highlight=bool(changed and tracked),
+                    hide=False,
+                    message=f"⚠ Utilidad {utilidad_pct:.2f}% (justo, +{utilidad_pct - utilidad_min_pct:.2f}%)",
+                )
+            else:
+                # ERROR: debajo de umbral mínimo
+                return AlertDecision(
+                    style=RowStyle.DANGER,
+                    play_sound=SoundCue.ERROR if tracked else SoundCue.NONE,
+                    highlight=bool(tracked),
+                    hide=bool(ocultar_bajo_umbral),
+                    message=f"✗ Utilidad {utilidad_pct:.2f}% (insuficiente, {utilidad_pct - utilidad_min_pct:.2f}%)",
                 )
 
-        # 5) Si no hay utilidad calculable, igual aplicamos reglas por tracked/cambios
+        # 5) Si no hay utilidad calculable, aplicar reglas por tracked/cambios
+        # (sin color de rentabilidad, pero mantener otros estados)
         if tracked and changed:
             return AlertDecision(
                 style=RowStyle.WARNING,
@@ -162,7 +176,7 @@ class AlertEngine:
                 play_sound=SoundCue.NONE,
                 highlight=False,
                 hide=False,
-                message="En seguimiento",
+                message="En seguimiento (sin datos para evaluar rentabilidad)",
             )
 
         # Default

@@ -136,6 +136,66 @@ class Engine:
         except Exception:
             return None
 
+    def _resolve_costo_final(
+        self,
+        *,
+        costo_unit_ars: float | None,
+        costo_total_ars: float | None,
+        cantidad: float | None,
+        should_log: bool = False,
+    ) -> tuple[float | None, float | None]:
+        """
+        Resuelve la bidirecionaldad entre COSTO UNITARIO y COSTO TOTAL ARS.
+        
+        Reglas:
+        1. Si ambos están presentes: priorizar TOTAL (como valor autorizado)
+           y recalcular UNITARIO = TOTAL / cantidad
+        2. Si solo UNITARIO: calcular TOTAL = UNITARIO * cantidad
+        3. Si solo TOTAL: calcular UNITARIO = TOTAL / cantidad
+        4. Si ninguno: retornar (None, None)
+        
+        Retorna: (costo_unit_ars, costo_total_ars)
+        """
+        if should_log:
+            print(f"\n[CALC] _resolve_costo_final:")
+            print(f"  INPUT: unit_ars={costo_unit_ars}, total_ars={costo_total_ars}, cant={cantidad}")
+        
+        # Si ambos están presentes: priorizar TOTAL
+        if costo_total_ars is not None and costo_unit_ars is not None:
+            # Recalcular unitario desde total (si cantidad existe)
+            if cantidad not in (None, 0):
+                try:
+                    unit = float(costo_total_ars) / float(cantidad)
+                    if should_log:
+                        print(f"  AMBOS PRESENTES -> Priorizar TOTAL: unit={unit:.2f}, total={costo_total_ars:.2f}")
+                    return (unit, float(costo_total_ars))
+                except Exception:
+                    if should_log:
+                        print(f"  AMBOS PRESENTES (sin recalc): unit={costo_unit_ars:.2f}, total={costo_total_ars:.2f}")
+                    return (float(costo_unit_ars), float(costo_total_ars))
+            if should_log:
+                print(f"  AMBOS PRESENTES (cant=0): unit={costo_unit_ars:.2f}, total={costo_total_ars:.2f}")
+            return (float(costo_unit_ars), float(costo_total_ars))
+        
+        # Si solo TOTAL: calcular UNITARIO
+        if costo_total_ars is not None and costo_unit_ars is None:
+            unit = self._safe_div(costo_total_ars, cantidad)
+            if should_log:
+                print(f"  SOLO TOTAL -> Calcular unit: unit={unit}, total={costo_total_ars:.2f}")
+            return (unit, float(costo_total_ars) if costo_total_ars is not None else None)
+        
+        # Si solo UNITARIO: calcular TOTAL
+        if costo_unit_ars is not None and costo_total_ars is None:
+            total = self._safe_mul(costo_unit_ars, cantidad)
+            if should_log:
+                print(f"  SOLO UNIT -> Calcular total: unit={costo_unit_ars:.2f}, total={total}")
+            return (float(costo_unit_ars) if costo_unit_ars is not None else None, total)
+        
+        # Si ninguno
+        if should_log:
+            print(f"  NINGUNO -> (None, None)")
+        return (None, None)
+
     # -------------------------
     # Handler central
     # -------------------------
@@ -209,32 +269,51 @@ class Engine:
 
             # Si la subasta trae cantidad/precio_ref, los guardamos como "del sistema"
             cantidad = r.get("cantidad")
-            precio_ref_subasta_raw = r.get("precio_referencia")
+            precio_ref_total = r.get("precio_referencia")  # 🔥 SIEMPRE viene TOTAL de Playwright
             presupuesto_ref = r.get("presupuesto")
-            precio_ref_subasta = self._resolve_precio_ref_unitario(
-                cantidad=cantidad,
-                precio_referencia=precio_ref_subasta_raw,
-                presupuesto=presupuesto_ref,
-            )
+            
+            # 🔥 Calcular precio_ref_unitario SOLO si tenemos cantidad
+            precio_ref_unit = None
+            if precio_ref_total is not None and cantidad not in (None, 0):
+                try:
+                    precio_ref_unit = float(precio_ref_total) / float(cantidad)
+                except Exception:
+                    precio_ref_unit = None
 
-            if cantidad is not None or precio_ref_subasta is not None:
+            if cantidad is not None or precio_ref_total is not None:
                 existing = self.db.get_renglon_excel(renglon_id=pk) or {}
                 self.db.upsert_renglon_excel(
                     renglon_id=pk,
                     unidad_medida=existing.get("unidad_medida"),
                     cantidad=existing.get("cantidad") if cantidad is None else cantidad,
                     marca=existing.get("marca"),
-                    observaciones=existing.get("observaciones"),
-                    conversion_usd=existing.get("conversion_usd"),
-                    costo_usd=existing.get("costo_usd"),
-                    costo_final_pesos=existing.get("costo_final_pesos"),
-                    renta=existing.get("renta"),
-                    precio_referencia=existing.get("precio_referencia"),
-                    precio_referencia_subasta=(
-                        existing.get("precio_referencia_subasta")
-                        if precio_ref_subasta is None
-                        else precio_ref_subasta
+                    # REFACTORED columns
+                    obs_usuario=existing.get("obs_usuario"),
+                    conv_usd=existing.get("conv_usd"),
+                    costo_unit_usd=existing.get("costo_unit_usd"),
+                    costo_total_usd=existing.get("costo_total_usd"),
+                    costo_unit_ars=existing.get("costo_unit_ars"),
+                    costo_total_ars=existing.get("costo_total_ars"),
+                    renta_minima=existing.get("renta_minima"),
+                    precio_referencia=(
+                        existing.get("precio_referencia")
+                        if precio_ref_total is None
+                        else precio_ref_total  # Guardar TOTAL
                     ),
+                    precio_ref_unitario=(
+                        existing.get("precio_ref_unitario")
+                        if precio_ref_unit is None
+                        else precio_ref_unit  # Guardar UNITARIO calculado
+                    ),
+                    renta_referencia=existing.get("renta_referencia"),
+                    precio_unit_aceptable=existing.get("precio_unit_aceptable"),
+                    precio_total_aceptable=existing.get("precio_total_aceptable"),
+                    precio_unit_mejora=existing.get("precio_unit_mejora"),
+                    renta_para_mejorar=existing.get("renta_para_mejorar"),
+                    oferta_para_mejorar=existing.get("oferta_para_mejorar"),
+                    mejor_oferta_txt=existing.get("mejor_oferta_txt"),
+                    obs_cambio=existing.get("obs_cambio"),
+                    precio_referencia_subasta=None,  # Campo legacy, deprecado
                     updated_at=now_iso(),
                 )
 
@@ -329,58 +408,181 @@ class Engine:
         unidad_medida = None
         cantidad = None
         marca = None
-        observaciones = None
-        conversion_usd = None
-        costo_usd = None
-        costo_final_pesos = None
-        renta = None
-        precio_referencia_subasta = None  # <-- CORRECCIÓN: sí se carga desde DB
+        obs_usuario = None
+        conv_usd = None
+        costo_unit_usd = None
+        precio_total_usd = None
+        costo_unit_ars = None
+        costo_total_ars = None
+        renta_minima = None
+        precio_referencia = None  # TOTAL de subasta
+        precio_ref_unitario = None  # Calculado: precio_referencia / cantidad
+        renta_referencia = None
+        precio_unit_aceptable = None
+        precio_total_aceptable = None
+        precio_unit_mejora = None
+        renta_para_mejorar = None
+        oferta_para_mejorar = None
+        mejor_oferta_txt_val = None
+        obs_cambio = None
 
         if excel:
             unidad_medida = excel.get("unidad_medida")
             cantidad = excel.get("cantidad")
             marca = excel.get("marca")
-            observaciones = excel.get("observaciones")
-            conversion_usd = excel.get("conversion_usd")
-            costo_usd = excel.get("costo_usd")
-            costo_final_pesos = excel.get("costo_final_pesos")
-            renta = excel.get("renta")
-            precio_referencia_subasta = excel.get("precio_referencia_subasta")  # <-- FIX
+            obs_usuario = excel.get("obs_usuario")
+            # 🔥 Leer de columna NUEVA primero, fallback a LEGACY
+            conv_usd = excel.get("conv_usd") or excel.get("conversion_usd")
+            costo_unit_usd = excel.get("costo_unit_usd")
+            costo_total_usd = excel.get("costo_total_usd")
+            costo_unit_ars = excel.get("costo_unit_ars")
+            costo_total_ars = excel.get("costo_total_ars")
+            renta_minima = excel.get("renta_minima")
+            precio_referencia = excel.get("precio_referencia")  # TOTAL
+            precio_ref_unitario = excel.get("precio_ref_unitario")  # UNITARIO
+            renta_referencia = excel.get("renta_referencia")
+            precio_unit_aceptable = excel.get("precio_unit_aceptable")
+            precio_total_aceptable = excel.get("precio_total_aceptable")
+            precio_unit_mejora = excel.get("precio_unit_mejora")
+            renta_para_mejorar = excel.get("renta_para_mejorar")
+            oferta_para_mejorar = excel.get("oferta_para_mejorar")
+            mejor_oferta_txt_val = excel.get("mejor_oferta_txt")
+            obs_cambio = excel.get("obs_cambio")
 
-        costo_usd_calc = None
-        if conversion_usd not in (None, 0) and costo_final_pesos is not None:
-            try:
-                costo_usd_calc = float(costo_final_pesos) / float(conversion_usd)
-            except Exception:
-                costo_usd_calc = None
-
-        subtotal_para_mejorar = oferta_min_val
-        subtotal_costo_pesos = self._safe_mul(cantidad, costo_final_pesos)
-        p_unit_minimo = self._safe_mul(renta, costo_final_pesos)
-        subtotal = self._safe_mul(cantidad, p_unit_minimo)
-
-        precio_ref_unit = self._resolve_precio_ref_unitario(
+        # REFACTORING: Resolver bidirecionaldad de costos ARS
+        # Definir costo_subtotal antes de usar should_log
+        costo_subtotal = None
+        # 🎯 LOGGING CONDICIONAL: Solo si hay cambios reales
+        should_log = bool(
+            changed
+            and (
+                costo_unit_ars is not None
+                or renta_minima is not None
+                or oferta_min_val is not None
+            )
+        )  # Log solo con cambios y datos relevantes
+        
+        if should_log:
+            print(f"\n{'='*60}")
+            print(f"[UPDATE] Renglón: {rid} - 🔄 CAMBIO DETECTADO")
+            print(f"{'='*60}")
+        
+        costo_unit_ars, costo_total_ars = self._resolve_costo_final(
+            costo_unit_ars=costo_unit_ars,
+            costo_total_ars=costo_total_ars,
             cantidad=cantidad,
-            precio_referencia=precio_referencia_subasta,
-            presupuesto=presupuesto_val,
+            should_log=should_log,
         )
+        
+        # 🔥 Recalcular costos USD basándose en ARS y conversión
+        usd_recalculado = False
+        if conv_usd and conv_usd > 0:
+            if costo_unit_ars:
+                costo_unit_usd = float(costo_unit_ars) / float(conv_usd)
+                usd_recalculado = True
+            if costo_total_ars:
+                costo_total_usd = float(costo_total_ars) / float(conv_usd)
+                usd_recalculado = True
+            if should_log:
+                print(f"\n[CALC] Costos en USD (recalculados):")
+                print(f"  costo_unit_usd = {costo_unit_ars} / {conv_usd} = {costo_unit_usd}")
+                print(f"  costo_total_usd = {costo_total_ars} / {conv_usd} = {costo_total_usd}")
+            
+            # 🔥 CRÍTICO: Guardar USD recalculados en la BD
+            if usd_recalculado:
+                if should_log:
+                    print(f"\n[PERSIST] 💾 Guardando costos USD a base de datos:")
+                    print(f"  renglon_id={renglon_pk}")
+                    print(f"  conv_usd={conv_usd} (conversión USD)")
+                    print(f"  costo_unit_usd={costo_unit_usd}")
+                    print(f"  costo_total_usd={costo_total_usd}")
+                
+                # Leer datos existentes para no sobreescribir otros campos
+                existing = excel or {}
+                self.db.upsert_renglon_excel(
+                    renglon_id=renglon_pk,
+                    unidad_medida=existing.get("unidad_medida"),
+                    cantidad=existing.get("cantidad"),
+                    marca=existing.get("marca"),
+                    obs_usuario=existing.get("obs_usuario"),
+                    conv_usd=conv_usd,  # Guardar en columna NUEVA
+                    conversion_usd=conv_usd,  # Guardar en columna LEGACY
+                    costo_unit_ars=costo_unit_ars,
+                    costo_total_ars=costo_total_ars,
+                    renta_minima=existing.get("renta_minima"),
+                    costo_unit_usd=costo_unit_usd,
+                    costo_total_usd=costo_total_usd,
+                    precio_referencia=existing.get("precio_referencia"),
+                    precio_referencia_subasta=existing.get("precio_referencia_subasta"),
+                    updated_at=now_iso(),
+                )
+                
+                if should_log:
+                    print(f"  ✅ Costos USD guardados en BD (columnas: conv_usd + conversion_usd)")
 
-        renta_ref = None
-        if precio_ref_unit is not None and costo_final_pesos not in (None, 0):
-            renta_ref = (float(precio_ref_unit) / float(costo_final_pesos)) - 1.0
+        # REFACTORING: Actualizar cálculos con nuevos nombres de campos
+        if should_log:
+            print(f"\n[CALC] Precio aceptable ((1 + renta_minima) * costo):")
+            print(f"  renta_minima={renta_minima} (fracción: 0.1=10%, 0.3=30%)")
+        
+        # Cálculos de precio aceptable (si hay datos, siempre recalcular para evitar valores stale)
+        # renta_minima ahora es fracción (0.1 = 10%), entonces: precio = costo * (1 + renta_minima)
+        if renta_minima is not None:
+            precio_unit_aceptable = self._safe_mul((1.0 + renta_minima), costo_unit_ars)
+            if should_log:
+                print(f"  precio_unit_aceptable = (1 + {renta_minima}) * {costo_unit_ars} = {precio_unit_aceptable}")
+            precio_total_aceptable = self._safe_mul((1.0 + renta_minima), costo_total_ars)
+            if should_log:
+                print(f"  precio_total_aceptable = (1 + {renta_minima}) * {costo_total_ars} = {precio_total_aceptable}")
+        elif should_log:
+            print(f"  precio_unit_aceptable (sin datos) = {precio_unit_aceptable}")
+            print(f"  precio_total_aceptable (sin datos) = {precio_total_aceptable}")
 
-        p_unit_mejora = self._safe_div(subtotal_para_mejorar, cantidad)
+        # Precio referencia unitario (si no está en la BD)
+        if should_log:
+            print(f"\n[CALC] Precio referencia unitario:")
+        if precio_referencia is not None:
+            # 🔥 precio_referencia es TOTAL, dividir por cantidad para obtener UNITARIO
+            precio_ref_unitario = self._safe_div(precio_referencia, cantidad)
+            if should_log:
+                print(f"  precio_ref_unitario = {precio_referencia} / {cantidad} = {precio_ref_unitario}")
+        elif should_log:
+            print(f"  precio_ref_unitario (sin datos) = {precio_ref_unitario}")
 
-        dif_unit = None
-        if p_unit_mejora is not None and costo_final_pesos is not None:
-            dif_unit = float(p_unit_mejora) - float(costo_final_pesos)
+        # Rentabilidad sobre referencia
+        if should_log:
+            print(f"\n[CALC] Rentabilidad referencia:")
+        if precio_ref_unitario is not None and costo_unit_ars not in (None, 0):
+            renta_referencia = (float(precio_ref_unitario) / float(costo_unit_ars)) - 1.0
+            if should_log:
+                print(f"  renta_referencia = ({precio_ref_unitario} / {costo_unit_ars}) - 1 = {renta_referencia:.2%}")
+        elif should_log:
+            print(f"  renta_referencia (sin datos) = {renta_referencia}")
 
-        renta_dpc = None
-        if p_unit_mejora is not None and costo_final_pesos not in (None, 0):
-            renta_dpc = (float(p_unit_mejora) / float(costo_final_pesos)) - 1.0
+        # Precio unitario para mejorar (si no está en la BD)
+        if should_log:
+            print(f"\n[CALC] Precio para mejorar:")
+        precio_unit_mejora = self._safe_div(oferta_min_val, cantidad)
+        if should_log:
+            print(f"  precio_unit_mejora = {oferta_min_val} / {cantidad} = {precio_unit_mejora}")
+
+        # Rentabilidad para mejorar (basada en precio unitario para mejorar)
+        if should_log:
+            print(f"\n[CALC] Rentabilidad para mejorar:")
+        if precio_unit_mejora is not None and costo_unit_ars not in (None, 0):
+            renta_para_mejorar = (float(precio_unit_mejora) / float(costo_unit_ars)) - 1.0
+            if should_log:
+                print(f"  renta_para_mejorar = ({precio_unit_mejora} / {costo_unit_ars}) - 1 = {renta_para_mejorar:.2%}")
+        elif should_log:
+            print(f"  renta_para_mejorar (sin datos) = {renta_para_mejorar}")
+        
+        # 🔥 oferta_para_mejorar = oferta mínima actual (es la que hay que superar)
+        oferta_para_mejorar = oferta_min_val
+        if should_log:
+            print(f"\n[CALC] Oferta para mejorar:")
+            print(f"  oferta_para_mejorar = {oferta_para_mejorar} (oferta mínima actual)")
 
         cfg = self.db.get_renglon_config(renglon_id=renglon_pk)
-        costo_subtotal = None
         seguir = False
         oferta_mia = False
         utilidad_min_pct = self.config.utilidad_min_pct_default
@@ -390,28 +592,97 @@ class Engine:
             costo_subtotal = cfg.get("costo_subtotal")
             seguir = bool(cfg.get("seguir"))
             oferta_mia = bool(cfg.get("oferta_mia"))
-            utilidad_min_pct = float(cfg.get("utilidad_min_pct", utilidad_min_pct))
+            # 🔥 NO sobrescribir utilidad_min_pct desde config si viene de renta_minima
+            if renta_minima is None:
+                utilidad_min_pct = float(cfg.get("utilidad_min_pct", utilidad_min_pct))
             ocultar_bajo_umbral = bool(cfg.get("ocultar_bajo_umbral", ocultar_bajo_umbral))
+        
+        # 🔥 CRÍTICO: Derivar utilidad_min_pct de renta_minima (PRIORIDAD sobre config)
+        if renta_minima is not None:
+            # renta_minima = 0.15 → utilidad_min_pct = 15.0%
+            utilidad_min_pct = renta_minima * 100.0
+            if should_log:
+                print(f"\n[CONFIG] Umbral de alerta derivado de RENTA MÍNIMA:")
+                print(f"  renta_minima={renta_minima:.2f} (fracción) → utilidad_min_pct={utilidad_min_pct:.2f}%")
 
         base_cost = costo_subtotal
-        if base_cost is None and costo_final_pesos is not None:
-            base_cost = costo_final_pesos
+        if base_cost is None and costo_unit_ars is not None:
+            base_cost = costo_unit_ars
 
+        if should_log:
+            print(f"\n[CALC] Utilidad porcentual (CRÍTICO para coloración):")
+            print(f"  base_cost = {base_cost} (costo_subtotal={costo_subtotal} o costo_unit_ars={costo_unit_ars})")
+            print(f"  oferta_min_val = {oferta_min_val}")
+        
         utilidad_pct = None
         if base_cost is not None and base_cost > 0 and oferta_min_val is not None:
             utilidad_pct = ((float(oferta_min_val) - float(base_cost)) / float(base_cost)) * 100.0
+            if should_log:
+                print(f"  utilidad_pct = (({oferta_min_val} - {base_cost}) / {base_cost}) * 100 = {utilidad_pct:.2f}%")
+        elif should_log:
+            print(f"  utilidad_pct = None (falta base_cost o oferta)")
+
+        # 🔥 Usar renta_para_mejorar como base de color si existe
+        utilidad_para_alerta = utilidad_pct
+        if renta_para_mejorar is not None:
+            utilidad_para_alerta = float(renta_para_mejorar) * 100.0
+            if should_log:
+                print(f"  utilidad_para_alerta (renta_para_mejorar) = {utilidad_para_alerta:.2f}%")
 
         tracked = bool(seguir or (base_cost is not None))
 
+        if should_log:
+            print(f"\n[DECISION] AlertEngine.decide:")
+            print(f"  tracked={tracked}, oferta_mia={oferta_mia}")
+            if utilidad_para_alerta is not None:
+                print(f"  utilidad_pct={utilidad_para_alerta:.2f}%, utilidad_min_pct={utilidad_min_pct:.2f}%")
+            else:
+                print(f"  utilidad_pct=None (sin datos), utilidad_min_pct={utilidad_min_pct:.2f}%")
+            print(f"  ocultar_bajo_umbral={ocultar_bajo_umbral}, changed={changed}")
+        
         decision: AlertDecision = self.alert_engine.decide(
             tracked=tracked,
             oferta_mia=oferta_mia,
-            utilidad_pct=utilidad_pct,
+            utilidad_pct=utilidad_para_alerta,
             utilidad_min_pct=utilidad_min_pct,
             ocultar_bajo_umbral=ocultar_bajo_umbral,
             changed=bool(changed),
             http_status=http_status,
             mensaje=mensaje,
+        )
+        
+        if should_log:
+            print(f"  RESULTADO: style={decision.style.value}, hide={decision.hide}, highlight={decision.highlight}")
+            print(f"  mensaje='{decision.message}'")
+            print(f"{'='*60}\n")
+
+        # Persistir campos de cálculo para que la UI los vea también en refresh desde BD.
+        existing = excel or {}
+        self.db.upsert_renglon_excel(
+            renglon_id=renglon_pk,
+            unidad_medida=unidad_medida,
+            cantidad=cantidad,
+            marca=marca,
+            obs_usuario=obs_usuario,
+            conv_usd=conv_usd,
+            conversion_usd=conv_usd,
+            costo_unit_usd=costo_unit_usd,
+            costo_total_usd=costo_total_usd,
+            costo_unit_ars=costo_unit_ars,
+            costo_total_ars=costo_total_ars,
+            renta_minima=renta_minima,
+            precio_referencia=precio_referencia,
+            precio_ref_unitario=precio_ref_unitario,
+            renta_referencia=renta_referencia,
+            precio_unit_aceptable=precio_unit_aceptable,
+            precio_total_aceptable=precio_total_aceptable,
+            precio_unit_mejora=precio_unit_mejora,
+            renta_para_mejorar=renta_para_mejorar,
+            oferta_para_mejorar=oferta_para_mejorar,
+            mejor_oferta_txt=mejor_txt,
+            obs_cambio=(mensaje or existing.get("obs_cambio")),
+            precio_referencia_subasta=existing.get("precio_referencia_subasta"),
+            updated_at=now_iso(),
         )
 
         if changed:
@@ -430,20 +701,23 @@ class Engine:
                     "unidad_medida": unidad_medida,
                     "cantidad": cantidad,
                     "marca": marca,
-                    "observaciones": observaciones,
-                    "conversion_usd": conversion_usd,
-                    "costo_usd": costo_usd_calc if costo_usd_calc is not None else costo_usd,
-                    "costo_final_pesos": costo_final_pesos,
-                    "renta": renta,
-                    "precio_referencia_subasta": precio_ref_unit,
-                    "subtotal_para_mejorar": subtotal_para_mejorar,
-                    "subtotal_costo_pesos": subtotal_costo_pesos,
-                    "p_unit_minimo": p_unit_minimo,
-                    "subtotal": subtotal,
-                    "renta_ref": renta_ref,
-                    "p_unit_mejora": p_unit_mejora,
-                    "dif_unit": dif_unit,
-                    "renta_dpc": renta_dpc,
+                    "obs_usuario": obs_usuario,
+                    "conv_usd": conv_usd,
+                    "costo_unit_usd": costo_unit_usd,
+                    "costo_total_usd": costo_total_usd,
+                    "costo_unit_ars": costo_unit_ars,
+                    "costo_total_ars": costo_total_ars,
+                    "renta_minima": renta_minima,
+                    "precio_referencia": precio_referencia,
+                    "precio_ref_unitario": precio_ref_unitario,
+                    "renta_referencia": renta_referencia,
+                    "precio_unit_aceptable": precio_unit_aceptable,
+                    "precio_total_aceptable": precio_total_aceptable,
+                    "precio_unit_mejora": precio_unit_mejora,
+                    "renta_para_mejorar": renta_para_mejorar,
+                    "oferta_para_mejorar": oferta_para_mejorar,
+                    "mejor_oferta_txt": mejor_txt,  # 🔥 USAR VALOR DEL ESTADO, NO DE BD EXCEL
+                    "obs_cambio": obs_cambio,
                     "utilidad_pct": utilidad_pct,
                     "seguir": bool(seguir),
                     "oferta_mia": bool(oferta_mia),
@@ -513,6 +787,11 @@ class Engine:
             warn(
                 EventType.HTTP_ERROR,
                 f"HTTP={http_status} streak={streak} -> {decision.action.value} ({decision.message})",
+                payload={
+                    "http_status": http_status,
+                    "id_cot": id_cot,
+                    "streak": streak,
+                },
             )
         )
 

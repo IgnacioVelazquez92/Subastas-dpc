@@ -73,26 +73,92 @@ class ColumnManager:
         self.save_visible_columns(cols)
     
     def show_dialog(self, parent_window: ctk.CTk) -> None:
-        """Abre diálogo de configuración de columnas."""
+        """Abre diálogo de configuración de columnas con tema LIGHT."""
         win = ctk.CTkToplevel(parent_window)
-        win.title("Columnas")
-        win.geometry("520x420")
+        win.title("Configurar Columnas")
+        win.geometry("600x480")
         
-        body = ctk.CTkFrame(win)
-        body.pack(fill="both", expand=True, padx=10, pady=10)
+        # Hacer que la ventana sea siempre sobre la principal
+        win.transient(parent_window)
+        
+        # Centrar en pantalla
+        win.update_idletasks()
+        parent_x = parent_window.winfo_x()
+        parent_y = parent_window.winfo_y()
+        parent_w = parent_window.winfo_width()
+        parent_h = parent_window.winfo_height()
+        
+        x = parent_x + (parent_w - 900) // 2
+        y = parent_y + (parent_h - 480) // 2
+        win.geometry(f"900x480+{x}+{y}")
+        
+        # Header
+        header = ctk.CTkFrame(win, fg_color="#F5F5F5", corner_radius=0)
+        header.pack(fill="x", padx=0, pady=0)
+        
+        ctk.CTkLabel(
+            header,
+            text="📊 Configurar Columnas",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            text_color="#1A1A1A",
+        ).pack(anchor="w", padx=20, pady=(15, 5))
+        
+        ctk.CTkLabel(
+            header,
+            text="Selecciona qué columnas deseas ver en la tabla",
+            font=ctk.CTkFont(size=10),
+            text_color="#666666",
+        ).pack(anchor="w", padx=20, pady=(0, 15))
+        
+        sep = ctk.CTkFrame(header, height=1, fg_color="#E0E0E0")
+        sep.pack(fill="x")
+        
+        # Body con tema LIGHT
+        body = ctk.CTkFrame(win, fg_color="#FFFFFF")
+        body.pack(fill="both", expand=True, padx=20, pady=20)
         
         # Panel izquierdo: columnas visibles
-        left = ctk.CTkFrame(body)
-        left.pack(side="left", fill="both", expand=True, padx=(0, 6))
-        ctk.CTkLabel(left, text="Visibles (orden)").pack(anchor="w")
-        list_visible = tk.Listbox(left, selectmode="browse")
+        left = ctk.CTkFrame(body, fg_color="transparent")
+        left.pack(side="left", fill="both", expand=True, padx=(0, 10))
+        ctk.CTkLabel(
+            left,
+            text="✅ Columnas Visibles",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color="#1A7F00",
+        ).pack(anchor="w", pady=(0, 8))
+        list_visible = tk.Listbox(
+            left,
+            selectmode="browse",
+            bg="#F9F9F9",
+            fg="#1A1A1A",
+            selectbackground="#4CAF50",
+            selectforeground="#FFFFFF",
+            font=("Segoe UI", 10),
+            relief="solid",
+            borderwidth=1,
+        )
         list_visible.pack(fill="both", expand=True)
         
         # Panel derecho: columnas ocultas
-        right = ctk.CTkFrame(body)
-        right.pack(side="right", fill="both", expand=True, padx=(6, 0))
-        ctk.CTkLabel(right, text="Ocultas").pack(anchor="w")
-        list_hidden = tk.Listbox(right, selectmode="browse")
+        right = ctk.CTkFrame(body, fg_color="transparent")
+        right.pack(side="right", fill="both", expand=True, padx=(10, 0))
+        ctk.CTkLabel(
+            right,
+            text="⭕ Columnas Ocultas",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color="#C62828",
+        ).pack(anchor="w", pady=(0, 8))
+        list_hidden = tk.Listbox(
+            right,
+            selectmode="browse",
+            bg="#F9F9F9",
+            fg="#1A1A1A",
+            selectbackground="#F44336",
+            selectforeground="#FFFFFF",
+            font=("Segoe UI", 10),
+            relief="solid",
+            borderwidth=1,
+        )
         list_hidden.pack(fill="both", expand=True)
         
         # Llenar listas iniciales
@@ -144,35 +210,79 @@ class ColumnManager:
             list_visible.insert(idx + 1, label)
             list_visible.selection_set(idx + 1)
         
-        # Botones de operaciones
-        btns = ctk.CTkFrame(win)
-        btns.pack(fill="x", padx=10, pady=(0, 10))
+        # Botones de operaciones - LIGHT theme
+        btns = ctk.CTkFrame(win, fg_color="#F5F5F5", corner_radius=0)
+        btns.pack(fill="x", padx=0, pady=0)
+        
+        sep2 = ctk.CTkFrame(btns, height=1, fg_color="#E0E0E0")
+        sep2.pack(fill="x")
+        
+        btns_inner = ctk.CTkFrame(btns, fg_color="#F5F5F5")
+        btns_inner.pack(fill="x", padx=15, pady=12)
         
         ctk.CTkButton(
-            btns, text="Agregar",
-            command=lambda: move_selected(list_hidden, list_visible)
+            btns_inner,
+            text="➕",
+            command=lambda: move_selected(list_hidden, list_visible),
+            fg_color="#4CAF50",
+            hover_color="#45a049",
+            text_color="#FFFFFF",
         ).pack(side="left", padx=4)
         
         ctk.CTkButton(
-            btns, text="Quitar",
-            command=lambda: move_selected(list_visible, list_hidden)
+            btns_inner,
+            text="➖",
+            command=lambda: move_selected(list_visible, list_hidden),
+            fg_color="#F44336",
+            hover_color="#EF5350",
+            text_color="#FFFFFF",
         ).pack(side="left", padx=4)
         
-        ctk.CTkButton(btns, text="Subir", command=move_up).pack(side="left", padx=6)
-        ctk.CTkButton(btns, text="Bajar", command=move_down).pack(side="left", padx=6)
+        ctk.CTkButton(
+            btns_inner,
+            text="⬆️",
+            command=move_up,
+            fg_color="#2196F3",
+            hover_color="#1976D2",
+            text_color="#FFFFFF",
+        ).pack(side="left", padx=4)
+        
+        ctk.CTkButton(
+            btns_inner,
+            text="⬇️",
+            command=move_down,
+            fg_color="#2196F3",
+            hover_color="#1976D2",
+            text_color="#FFFFFF",
+        ).pack(side="left", padx=4)
         
         # Botones finales
         def apply_changes():
             labels = list(list_visible.get(0, "end"))
             if not labels:
                 messagebox.showwarning(
-                    "Atención",
-                    "Debe quedar al menos una columna visible."
+                    "⚠️  Atención",
+                    "Debe quedar al menos una columna visible.",
                 )
                 return
             cols = [label_to_col(l) for l in labels]
             self.set_visible_columns(cols)
             win.destroy()
         
-        ctk.CTkButton(btns, text="Aplicar", command=apply_changes).pack(side="right", padx=6)
-        ctk.CTkButton(btns, text="Cerrar", command=win.destroy).pack(side="right", padx=6)
+        ctk.CTkButton(
+            btns_inner,
+            text="✅ Aplicar",
+            command=apply_changes,
+            fg_color="#1B5E20",
+            hover_color="#2E7D32",
+            text_color="#FFFFFF",
+        ).pack(side="right", padx=4)
+        
+        ctk.CTkButton(
+            btns_inner,
+            text="❌ Cerrar",
+            command=win.destroy,
+            fg_color="#E0E0E0",
+            hover_color="#D0D0D0",
+            text_color="#1A1A1A",
+        ).pack(side="right", padx=4)

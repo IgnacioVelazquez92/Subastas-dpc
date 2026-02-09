@@ -27,6 +27,27 @@
           "response_json": {
             "d": "[{\"id_oferta_subasta\":1,\"id_cotizacion_det\":null,\"id_renglon\":836160,\"id_proveedor\":30696129,\"monto\":20115680,\"cantidad\":null,\"fecha_hora\":null,\"proveedor\":\"Prov. 30718165\",\"mejor_oferta\":\"Mejor Oferta Vigente:\",\"hora\":\"10:33:06\",\"monto_acumulado_renglon\":null,\"monto_a_mostrar\":\"$ 20.115.680,0000\"},{\"id_oferta_subasta\":2,\"id_cotizacion_det\":null,\"id_renglon\":836160,\"id_proveedor\":69728,\"monto\":20251036,\"cantidad\":null,\"fecha_hora\":null,\"proveedor\":\"Prov. 91764\",\"mejor_oferta\":\"Oferta Superada:\",\"hora\":\"10:08:06\",\"monto_acumulado_renglon\":null,\"monto_a_mostrar\":\"$ 20.251.036,0000\"},{\"id_oferta_subasta\":3,\"id_cotizacion_det\":null,\"id_renglon\":836160,\"id_proveedor\":30696129,\"monto\":20352800,\"cantidad\":null,\"fecha_hora\":null,\"proveedor\":\"Prov. 30718165\",\"mejor_oferta\":\"Oferta Superada:\",\"hora\":\"08:49:26\",\"monto_acumulado_renglon\":null,\"monto_a_mostrar\":\"$ 20.352.800,0000\"},{\"id_oferta_subasta\":4,\"id_cotizacion_det\":null,\"id_renglon\":836160,\"id_proveedor\":30964250,\"monto\":20550400,\"cantidad\":null,\"fecha_hora\":null,\"proveedor\":\"Prov. 30986286\",\"mejor_oferta\":\"Oferta Superada:\",\"hora\":\"08:46:31\",\"monto_acumulado_renglon\":null,\"monto_a_mostrar\":\"$ 20.550.400,0000\"},{\"id_oferta_subasta\":5,\"id_cotizacion_det\":null,\"id_renglon\":836160,\"id_proveedor\":30696129,\"monto\":21577920,\"cantidad\":null,\"fecha_hora\":null,\"proveedor\":\"Prov. 30718165\",\"mejor_oferta\":\"Oferta Superada:\",\"hora\":\"08:43:22\",\"monto_acumulado_renglon\":null,\"monto_a_mostrar\":\"$ 21.577.920,0000\"},{\"id_oferta_subasta\":6,\"id_cotizacion_det\":null,\"id_renglon\":836160,\"id_proveedor\":69728,\"monto\":21696480,\"cantidad\":null,\"fecha_hora\":null,\"proveedor\":\"Prov. 91764\",\"mejor_oferta\":\"Oferta Superada:\",\"hora\":\"08:14:21\",\"monto_acumulado_renglon\":null,\"monto_a_mostrar\":\"$ 21.696.480,0000\"}]@@$ 21.696.480,0000@@$ 20.015.101,6000@@"
           }
+        },
+        {
+          "id_renglon": "836161",
+          "descripcion": "MONITOR LED 24 PULGADAS FULL HD",
+          "response_json": {
+            "d": "[{\"id_oferta_subasta\":11,\"id_cotizacion_det\":null,\"id_renglon\":836161,\"id_proveedor\":12345,\"monto\":900000,\"cantidad\":null,\"fecha_hora\":null,\"proveedor\":\"Prov. 12345\",\"mejor_oferta\":\"Mejor Oferta Vigente:\",\"hora\":\"10:00:05\",\"monto_acumulado_renglon\":null,\"monto_a_mostrar\":\"$ 900.000,0000\"},{\"id_oferta_subasta\":12,\"id_cotizacion_det\":null,\"id_renglon\":836161,\"id_proveedor\":67890,\"monto\":915000,\"cantidad\":null,\"fecha_hora\":null,\"proveedor\":\"Prov. 67890\",\"mejor_oferta\":\"Oferta Superada:\",\"hora\":\"09:58:10\",\"monto_acumulado_renglon\":null,\"monto_a_mostrar\":\"$ 915.000,0000\"}]@@$ 950.000,0000@@$ 891.000,0000@@"
+          }
+        },
+        {
+          "id_renglon": "836162",
+          "descripcion": "TECLADO USB ESPANOL CON N",
+          "response_json": {
+            "d": "[{\"id_oferta_subasta\":21,\"id_cotizacion_det\":null,\"id_renglon\":836162,\"id_proveedor\":11111,\"monto\":45000,\"cantidad\":null,\"fecha_hora\":null,\"proveedor\":\"Prov. 11111\",\"mejor_oferta\":\"Mejor Oferta Vigente:\",\"hora\":\"10:00:10\",\"monto_acumulado_renglon\":null,\"monto_a_mostrar\":\"$ 45.000,0000\"},{\"id_oferta_subasta\":22,\"id_cotizacion_det\":null,\"id_renglon\":836162,\"id_proveedor\":22222,\"monto\":46500,\"cantidad\":null,\"fecha_hora\":null,\"proveedor\":\"Prov. 22222\",\"mejor_oferta\":\"Oferta Superada:\",\"hora\":\"09:57:30\",\"monto_acumulado_renglon\":null,\"monto_a_mostrar\":\"$ 46.500,0000\"}]@@$ 54.000,0000@@$ 44.550,0000@@"
+          }
+        },
+        {
+          "id_renglon": "836163",
+          "descripcion": "MOUSE OPTICO USB",
+          "response_json": {
+            "d": "[{\"id_oferta_subasta\":31,\"id_cotizacion_det\":null,\"id_renglon\":836163,\"id_proveedor\":33333,\"monto\":30000,\"cantidad\":null,\"fecha_hora\":null,\"proveedor\":\"Prov. 33333\",\"mejor_oferta\":\"Mejor Oferta Vigente:\",\"hora\":\"10:00:12\",\"monto_acumulado_renglon\":null,\"monto_a_mostrar\":\"$ 30.000,0000\"},{\"id_oferta_subasta\":32,\"id_cotizacion_det\":null,\"id_renglon\":836163,\"id_proveedor\":44444,\"monto\":31500,\"cantidad\":null,\"fecha_hora\":null,\"proveedor\":\"Prov. 44444\",\"mejor_oferta\":\"Oferta Superada:\",\"hora\":\"09:55:20\",\"monto_acumulado_renglon\":null,\"monto_a_mostrar\":\"$ 31.500,0000\"}]@@$ 36.000,0000@@$ 29.700,0000@@"
+          }
         }
       ]
     },

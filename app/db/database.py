@@ -66,11 +66,30 @@ class Database:
         """
         Asegura compatibilidad hacia atrás cuando el schema evoluciona.
         - Agrega columnas faltantes con ALTER TABLE.
+        
+        REFACTORING: Agregamos nuevas columnas con nombres mejorados
+        si la tabla existe sin ellas (para DBs existentes).
         """
         cols = self.fetchall("PRAGMA table_info(renglon_excel)")
         existing_cols = {c[1] for c in cols}  # c[1] = name
+        
+        # Legacy: ensure old columns exist
         if "precio_referencia_subasta" not in existing_cols:
             self.execute("ALTER TABLE renglon_excel ADD COLUMN precio_referencia_subasta REAL")
+        
+        # REFACTORING: Add new columns if they don't exist
+        new_columns = [
+            "obs_usuario", "conv_usd", "costo_unit_usd", "costo_total_usd",
+            "costo_unit_ars", "costo_total_ars", "renta_minima",
+            "precio_ref_unitario", "renta_referencia", "precio_unit_aceptable",
+            "precio_total_aceptable", "precio_unit_mejora", "renta_para_mejorar",
+            "oferta_para_mejorar", "mejor_oferta_txt", "obs_cambio"
+        ]
+        
+        for col in new_columns:
+            if col not in existing_cols:
+                col_type = "TEXT" if col in ["obs_usuario", "mejor_oferta_txt", "obs_cambio"] else "REAL"
+                self.execute(f"ALTER TABLE renglon_excel ADD COLUMN {col} {col_type}")
 
     def init_schema(self, schema_path: str | Path) -> None:
         """
@@ -244,6 +263,7 @@ class Database:
         }
 
     def fetch_export_rows(self, *, subasta_id: int) -> list[dict]:
+        """Exporta renglones con todos los campos nuevos (refactorizado)."""
         rows = self.fetchall(
             """
             SELECT
@@ -253,13 +273,23 @@ class Database:
                 e.unidad_medida AS unidad_medida,
                 e.cantidad AS cantidad,
                 e.marca AS marca,
-                e.observaciones AS observaciones,
-                e.conversion_usd AS conversion_usd,
-                e.costo_usd AS costo_usd,
-                e.costo_final_pesos AS costo_final_pesos,
-                e.renta AS renta,
-                e.precio_referencia_subasta AS precio_referencia_subasta,
-                st.oferta_min AS subtotal_para_mejorar
+                e.obs_usuario AS obs_usuario,
+                e.conv_usd AS conv_usd,
+                e.costo_unit_usd AS costo_unit_usd,
+                e.costo_total_usd AS costo_total_usd,
+                e.costo_unit_ars AS costo_unit_ars,
+                e.costo_total_ars AS costo_total_ars,
+                e.renta_minima AS renta_minima,
+                e.precio_unit_aceptable AS precio_unit_aceptable,
+                e.precio_total_aceptable AS precio_total_aceptable,
+                e.precio_referencia AS precio_referencia,
+                e.precio_ref_unitario AS precio_ref_unitario,
+                e.renta_referencia AS renta_referencia,
+                st.mejor_oferta_txt AS mejor_oferta_txt,
+                e.oferta_para_mejorar AS oferta_para_mejorar,
+                e.precio_unit_mejora AS precio_unit_mejora,
+                e.renta_para_mejorar AS renta_para_mejorar,
+                e.obs_cambio AS obs_cambio
             FROM renglon r
             JOIN subasta s ON s.id = r.subasta_id
             LEFT JOIN renglon_excel e ON e.renglon_id = r.id
@@ -279,13 +309,29 @@ class Database:
                     "UNIDAD DE MEDIDA": row["unidad_medida"],
                     "CANTIDAD": row["cantidad"],
                     "MARCA": row["marca"],
-                    "Observaciones": row["observaciones"],
-                    "CONVERSIÓN USD": row["conversion_usd"],
-                    "COSTO USD": row["costo_usd"],
-                    "COSTO FINAL PESOS": row["costo_final_pesos"],
-                    "RENTA": row["renta"],
-                    "Precio referencia": row["precio_referencia_subasta"],
-                    "SUBTOTAL PARA MEJORAR": row["subtotal_para_mejorar"],
+                    "OBS USUARIO": row["obs_usuario"],
+                    "CONVERSIÓN USD": row["conv_usd"],
+                    "COSTO UNIT USD": row["costo_unit_usd"],
+                    "COSTO TOTAL USD": row["costo_total_usd"],
+                    "COSTO UNIT ARS": row["costo_unit_ars"],
+                    "COSTO TOTAL ARS": row["costo_total_ars"],
+                    # Renta minima se exporta como fraccion (0-1) para evitar ambiguedad.
+                    # Si detectamos formato legacy (multiplicador >= 1), normalizar.
+                    "RENTA MINIMA %": (
+                        (row["renta_minima"] - 1.0)
+                        if row["renta_minima"] is not None and row["renta_minima"] > 1.0
+                        else row["renta_minima"]
+                    ),
+                    "PRECIO UNIT ACEPTABLE": row["precio_unit_aceptable"],
+                    "PRECIO TOTAL ACEPTABLE": row["precio_total_aceptable"],
+                    "PRECIO DE REFERENCIA": row["precio_referencia"],
+                    "PRECIO REF UNITARIO": row["precio_ref_unitario"],
+                    "RENTA REFERENCIA %": row["renta_referencia"],
+                    "MEJOR OFERTA ACTUAL": row["mejor_oferta_txt"],
+                    "OFERTA PARA MEJORAR": row["oferta_para_mejorar"],
+                    "PRECIO UNIT MEJORA": row["precio_unit_mejora"],
+                    "RENTA PARA MEJORAR %": row["renta_para_mejorar"],
+                    "OBS / CAMBIO": row["obs_cambio"],
                 }
             )
         return out
@@ -364,9 +410,15 @@ class Database:
         row = self.fetchone(
             """
             SELECT
-                unidad_medida, cantidad, marca, observaciones,
-                conversion_usd, costo_usd, costo_final_pesos,
-                renta, precio_referencia, precio_referencia_subasta
+                unidad_medida, cantidad, marca,
+                obs_usuario, conv_usd, costo_unit_usd, costo_total_usd,
+                costo_unit_ars, costo_total_ars, renta_minima,
+                precio_referencia, precio_ref_unitario, renta_referencia,
+                precio_unit_aceptable, precio_total_aceptable,
+                precio_unit_mejora, renta_para_mejorar, oferta_para_mejorar,
+                mejor_oferta_txt, obs_cambio,
+                observaciones, conversion_usd, costo_usd, costo_final_pesos,
+                renta, precio_referencia_subasta
             FROM renglon_excel
             WHERE renglon_id = ?
             """,
@@ -376,15 +428,33 @@ class Database:
             return None
 
         return {
+            # REFACTORED columns (preferred)
             "unidad_medida": row["unidad_medida"],
             "cantidad": row["cantidad"],
             "marca": row["marca"],
+            "obs_usuario": row["obs_usuario"],
+            "conv_usd": row["conv_usd"],
+            "costo_unit_usd": row["costo_unit_usd"],
+            "costo_total_usd": row["costo_total_usd"],
+            "costo_unit_ars": row["costo_unit_ars"],
+            "costo_total_ars": row["costo_total_ars"],
+            "renta_minima": row["renta_minima"],
+            "precio_referencia": row["precio_referencia"],
+            "precio_ref_unitario": row["precio_ref_unitario"],
+            "renta_referencia": row["renta_referencia"],
+            "precio_unit_aceptable": row["precio_unit_aceptable"],
+            "precio_total_aceptable": row["precio_total_aceptable"],
+            "precio_unit_mejora": row["precio_unit_mejora"],
+            "renta_para_mejorar": row["renta_para_mejorar"],
+            "oferta_para_mejorar": row["oferta_para_mejorar"],
+            "mejor_oferta_txt": row["mejor_oferta_txt"],
+            "obs_cambio": row["obs_cambio"],
+            # LEGACY columns (for backward compatibility)
             "observaciones": row["observaciones"],
             "conversion_usd": row["conversion_usd"],
             "costo_usd": row["costo_usd"],
             "costo_final_pesos": row["costo_final_pesos"],
             "renta": row["renta"],
-            "precio_referencia": row["precio_referencia"],
             "precio_referencia_subasta": row["precio_referencia_subasta"],
         }
 
@@ -392,48 +462,70 @@ class Database:
         self,
         *,
         renglon_id: int,
-        unidad_medida: str | None,
-        cantidad: float | None,
-        marca: str | None,
-        observaciones: str | None,
-        conversion_usd: float | None,
-        costo_usd: float | None,
-        costo_final_pesos: float | None,
-        renta: float | None,
-        precio_referencia: float | None,
-        precio_referencia_subasta: float | None,
-        updated_at: str,
+        unidad_medida: str | None = None,
+        cantidad: float | None = None,
+        marca: str | None = None,
+        # REFACTORED columns (preferred)
+        obs_usuario: str | None = None,
+        conv_usd: float | None = None,
+        costo_unit_usd: float | None = None,
+        costo_total_usd: float | None = None,
+        costo_unit_ars: float | None = None,
+        costo_total_ars: float | None = None,
+        renta_minima: float | None = None,
+        precio_referencia: float | None = None,
+        precio_ref_unitario: float | None = None,
+        renta_referencia: float | None = None,
+        precio_unit_aceptable: float | None = None,
+        precio_total_aceptable: float | None = None,
+        precio_unit_mejora: float | None = None,
+        renta_para_mejorar: float | None = None,
+        oferta_para_mejorar: float | None = None,
+        mejor_oferta_txt: str | None = None,
+        obs_cambio: str | None = None,
+        # LEGACY columns (for backward compatibility)
+        observaciones: str | None = None,
+        conversion_usd: float | None = None,
+        costo_usd: float | None = None,
+        costo_final_pesos: float | None = None,
+        renta: float | None = None,
+        precio_referencia_subasta: float | None = None,
+        updated_at: str = None,
     ) -> None:
+        # Use current timestamp if not provided
+        if updated_at is None:
+            from datetime import datetime
+            updated_at = datetime.now().isoformat()
+        
         row = self.fetchone("SELECT id FROM renglon_excel WHERE renglon_id = ?", (renglon_id,))
+        
+        # Update payload with all columns
         payload = (
-            unidad_medida,
-            cantidad,
-            marca,
-            observaciones,
-            conversion_usd,
-            costo_usd,
-            costo_final_pesos,
-            renta,
-            precio_referencia,
-            precio_referencia_subasta,
-            updated_at,
-            renglon_id,
+            unidad_medida, cantidad, marca,
+            obs_usuario, conv_usd, costo_unit_usd, costo_total_usd,
+            costo_unit_ars, costo_total_ars, renta_minima,
+            precio_referencia, precio_ref_unitario, renta_referencia,
+            precio_unit_aceptable, precio_total_aceptable,
+            precio_unit_mejora, renta_para_mejorar, oferta_para_mejorar,
+            mejor_oferta_txt, obs_cambio,
+            observaciones, conversion_usd, costo_usd, costo_final_pesos,
+            renta, precio_referencia_subasta,
+            updated_at, renglon_id
         )
 
         if row:
             self.execute(
                 """
                 UPDATE renglon_excel
-                SET unidad_medida = ?,
-                    cantidad = ?,
-                    marca = ?,
-                    observaciones = ?,
-                    conversion_usd = ?,
-                    costo_usd = ?,
-                    costo_final_pesos = ?,
-                    renta = ?,
-                    precio_referencia = ?,
-                    precio_referencia_subasta = ?,
+                SET unidad_medida = ?, cantidad = ?, marca = ?,
+                    obs_usuario = ?, conv_usd = ?, costo_unit_usd = ?, costo_total_usd = ?,
+                    costo_unit_ars = ?, costo_total_ars = ?, renta_minima = ?,
+                    precio_referencia = ?, precio_ref_unitario = ?, renta_referencia = ?,
+                    precio_unit_aceptable = ?, precio_total_aceptable = ?,
+                    precio_unit_mejora = ?, renta_para_mejorar = ?, oferta_para_mejorar = ?,
+                    mejor_oferta_txt = ?, obs_cambio = ?,
+                    observaciones = ?, conversion_usd = ?, costo_usd = ?, costo_final_pesos = ?,
+                    renta = ?, precio_referencia_subasta = ?,
                     updated_at = ?
                 WHERE renglon_id = ?
                 """,
@@ -443,10 +535,17 @@ class Database:
             self.execute(
                 """
                 INSERT INTO renglon_excel (
-                    unidad_medida, cantidad, marca, observaciones,
-                    conversion_usd, costo_usd, costo_final_pesos,
-                    renta, precio_referencia, precio_referencia_subasta, updated_at, renglon_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    unidad_medida, cantidad, marca,
+                    obs_usuario, conv_usd, costo_unit_usd, costo_total_usd,
+                    costo_unit_ars, costo_total_ars, renta_minima,
+                    precio_referencia, precio_ref_unitario, renta_referencia,
+                    precio_unit_aceptable, precio_total_aceptable,
+                    precio_unit_mejora, renta_para_mejorar, oferta_para_mejorar,
+                    mejor_oferta_txt, obs_cambio,
+                    observaciones, conversion_usd, costo_usd, costo_final_pesos,
+                    renta, precio_referencia_subasta,
+                    updated_at, renglon_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 payload,
             )

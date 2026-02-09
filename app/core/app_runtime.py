@@ -126,22 +126,30 @@ class AppRuntime:
         renglon_id: int,
         unidad_medida: str | None = None,
         marca: str | None = None,
-        observaciones: str | None = None,
+        obs_usuario: str | None = None,
         conversion_usd: float | None = None,
-        costo_final_pesos: float | None = None,
-        renta: float | None = None,
+        costo_unit_ars: float | None = None,
+        costo_total_ars: float | None = None,
+        costo_unit_usd: float | None = None,
+        costo_total_usd: float | None = None,
+        renta_minima: float | None = None,
     ) -> None:
         existing = self.db.get_renglon_excel(renglon_id=renglon_id) or {}
+        # 🔥 CRÍTICO: Guardar en AMBAS columnas (nueva y legacy) para evitar pérdida de datos
+        conv_usd_value = conversion_usd if conversion_usd is not None else existing.get("conv_usd")
         self.db.upsert_renglon_excel(
             renglon_id=renglon_id,
             unidad_medida=unidad_medida,
             cantidad=existing.get("cantidad"),
             marca=marca,
-            observaciones=observaciones,
-            conversion_usd=conversion_usd,
-            costo_usd=existing.get("costo_usd"),
-            costo_final_pesos=costo_final_pesos,
-            renta=renta,
+            obs_usuario=obs_usuario,
+            conv_usd=conv_usd_value,  # Guardar en columna NUEVA
+            conversion_usd=conversion_usd,  # Guardar en columna LEGACY
+            costo_unit_ars=costo_unit_ars,
+            costo_total_ars=costo_total_ars,
+            renta_minima=renta_minima,
+            costo_unit_usd=costo_unit_usd if costo_unit_usd is not None else existing.get("costo_unit_usd"),
+            costo_total_usd=costo_total_usd if costo_total_usd is not None else existing.get("costo_total_usd"),
             precio_referencia=existing.get("precio_referencia"),
             precio_referencia_subasta=existing.get("precio_referencia_subasta"),
             updated_at=now_iso(),
@@ -163,25 +171,24 @@ class AppRuntime:
         merged_seguir = bool(cfg.get("seguir")) if seguir is None else bool(seguir)
         merged_oferta_mia = bool(cfg.get("oferta_mia")) if oferta_mia is None else bool(oferta_mia)
 
-        utilidad_min_pct = float(
-            cfg.get("utilidad_min_pct", self.engine.config.utilidad_min_pct_default)
-        )
-        ocultar_bajo_umbral = bool(
-            cfg.get("ocultar_bajo_umbral", self.engine.config.ocultar_bajo_umbral_default)
-        )
-
+        # 🔥 Preservar o actualizar utilidad_min_pct según argumento
+        merged_utilidad_min_pct = cfg.get("utilidad_min_pct", self.engine.config.utilidad_min_pct_default)
         if utilidad_min_pct is not None:
-            utilidad_min_pct = float(utilidad_min_pct)
-        if ocultar_bajo_umbral is not None:
-            ocultar_bajo_umbral = bool(ocultar_bajo_umbral)
+            merged_utilidad_min_pct = float(utilidad_min_pct)
+        else:
+            merged_utilidad_min_pct = float(merged_utilidad_min_pct)
+        
+        merged_ocultar = bool(
+            cfg.get("ocultar_bajo_umbral", self.engine.config.ocultar_bajo_umbral_default)
+        ) if ocultar_bajo_umbral is None else bool(ocultar_bajo_umbral)
 
         self.db.upsert_renglon_config(
             renglon_id=renglon_id,
             costo_subtotal=merged_costo,
             oferta_mia=merged_oferta_mia,
             seguir=merged_seguir,
-            utilidad_min_pct=utilidad_min_pct,
-            ocultar_bajo_umbral=ocultar_bajo_umbral,
+            utilidad_min_pct=merged_utilidad_min_pct,
+            ocultar_bajo_umbral=merged_ocultar,
             updated_at=now_iso(),
         )
 
@@ -200,18 +207,63 @@ class AppRuntime:
         def _to_float(val):
             if val is None or val == "":
                 return None
+            if isinstance(val, (int, float)):
+                return float(val)
             try:
                 # soporta números como texto con miles/decimales estilo AR
                 s = str(val).strip()
                 if not s:
                     return None
-                return float(s.replace(".", "").replace(",", "."))
+                s = s.replace("%", "").strip()
+                if "," in s and "." in s:
+                    s = s.replace(".", "").replace(",", ".")
+                elif "," in s and "." not in s:
+                    s = s.replace(",", ".")
+                return float(s)
             except Exception:
                 return None
+        
+        def _normalize_id(val) -> str | None:
+            if val is None:
+                return None
+            if isinstance(val, int):
+                return str(val)
+            if isinstance(val, float):
+                return str(int(val)) if val.is_integer() else str(val)
+
+            s = str(val).strip()
+            if not s:
+                return None
+            try:
+                if "." in s:
+                    f = float(s)
+                    if f.is_integer():
+                        return str(int(f))
+            except Exception:
+                pass
+            return s
+
+        def _renta_to_fraction(val):
+            """Convierte renta desde Excel a fracción (0-1) para BD.
+
+            Acepta SOLO fracción:
+            - 0.30 -> 0.30
+            - 0.10 -> 0.10
+            """
+            if val is None or val == "":
+                return None
+            num = _to_float(val)
+            if num is None:
+                return None
+            if num < 0:
+                raise ValueError("RENTA MINIMA % debe ser >= 0")
+            if num > 1.0:
+                raise ValueError("RENTA MINIMA % debe estar entre 0 y 1 (ej: 0.30)")
+            return num
 
         for row in rows:
-            id_cot = row.get("ID SUBASTA")
-            id_renglon = row.get("ITEM")
+            id_cot = _normalize_id(row.get("ID SUBASTA"))
+            id_renglon = _normalize_id(row.get("ITEM"))
             if id_cot is None or id_renglon is None:
                 continue
 
@@ -229,19 +281,27 @@ class AppRuntime:
             # Traer lo existente para NO pisar campos "del sistema"
             existing = self.db.get_renglon_excel(renglon_id=renglon_id) or {}
 
+            # IMPORTANTE: Solo importamos USER_FIELDS
+            # - Los CALC_FIELDS se recalculan automáticamente por el engine
+            # - Los PLAYWRIGHT_FIELDS nunca deben ser sobrescritos por usuario
+            try:
+                renta_val = _renta_to_fraction(row.get("RENTA MINIMA %"))
+            except ValueError as exc:
+                raise ValueError(f"RENTA MINIMA % invalida en SUBASTA={id_cot}, ITEM={id_renglon}: {exc}")
+
             self.db.upsert_renglon_excel(
                 renglon_id=renglon_id,
                 unidad_medida=(row.get("UNIDAD DE MEDIDA") or None),
-                cantidad=_to_float(row.get("CANTIDAD")),
                 marca=(row.get("MARCA") or None),
-                observaciones=(row.get("Observaciones") or None),
-                conversion_usd=_to_float(row.get("CONVERSIÓN USD")),
-                costo_usd=existing.get("costo_usd"),
-                costo_final_pesos=_to_float(row.get("COSTO FINAL PESOS")),
-                renta=_to_float(row.get("RENTA")),
+                obs_usuario=(row.get("OBS USUARIO") or None),
+                conv_usd=_to_float(row.get("CONVERSIÓN USD")),
+                costo_unit_ars=_to_float(row.get("COSTO UNIT ARS")),
+                costo_total_ars=_to_float(row.get("COSTO TOTAL ARS")),
+                renta_minima=renta_val,
+                # Mantener valores de sistema (no sobrescribir)
                 precio_referencia=existing.get("precio_referencia"),
-                # mantener el valor proveniente de la subasta/collector
                 precio_referencia_subasta=existing.get("precio_referencia_subasta"),
+                cantidad=existing.get("cantidad"),  # De Playwright, no del usuario
                 updated_at=now_iso(),
             )
             updated += 1

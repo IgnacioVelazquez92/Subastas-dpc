@@ -19,40 +19,55 @@ COLUMNS = [
     "UNIDAD DE MEDIDA",
     "CANTIDAD",
     "MARCA",
-    "Observaciones",
+    "OBS USUARIO",
     "CONVERSIÓN USD",
-    "COSTO USD",
-    "COSTO FINAL PESOS",
-    "SUBTOTAL COSTO PESOS",
-    "RENTA",
-    "P.UNIT MINIMO",
-    "SUBTOTAL",
-    "Precio referencia",
-    "RENTA/ REF",
-    "P. UNIT MEJORA",
-    "SUBTOTAL PARA MEJORAR",
-    "dif unit",
-    "Renta DPC",
+    "COSTO UNIT USD",
+    "COSTO TOTAL USD",
+    "COSTO UNIT ARS",
+    "COSTO TOTAL ARS",
+    "RENTA MINIMA %",
+    "PRECIO UNIT ACEPTABLE",
+    "PRECIO TOTAL ACEPTABLE",
+    "PRECIO DE REFERENCIA",
+    "PRECIO REF UNITARIO",
+    "RENTA REFERENCIA %",
+    "MEJOR OFERTA ACTUAL",
+    "OFERTA PARA MEJORAR",
+    "PRECIO UNIT MEJORA",
+    "RENTA PARA MEJORAR %",
+    "OBS / CAMBIO",
 ]
 
 USER_FIELDS = {
     "UNIDAD DE MEDIDA",
     "MARCA",
-    "Observaciones",
+    "OBS USUARIO",
     "CONVERSIÓN USD",
-    "COSTO FINAL PESOS",
-    "RENTA",
+    "COSTO UNIT ARS",
+    "COSTO TOTAL ARS",
+    "RENTA MINIMA %",
 }
 
 CALC_FIELDS = {
-    "COSTO USD",
-    "SUBTOTAL COSTO PESOS",
-    "P.UNIT MINIMO",
-    "SUBTOTAL",
-    "RENTA/ REF",
-    "P. UNIT MEJORA",
-    "dif unit",
-    "Renta DPC",
+    "COSTO UNIT USD",
+    "COSTO TOTAL USD",
+    "PRECIO UNIT ACEPTABLE",
+    "PRECIO TOTAL ACEPTABLE",
+    "PRECIO REF UNITARIO",
+    "RENTA REFERENCIA %",
+    "PRECIO UNIT MEJORA",
+    "RENTA PARA MEJORAR %",
+}
+
+PLAYWRIGHT_FIELDS = {
+    "ID SUBASTA",
+    "ITEM",
+    "DESCRIPCION",
+    "CANTIDAD",
+    "PRECIO DE REFERENCIA",
+    "MEJOR OFERTA ACTUAL",
+    "OFERTA PARA MEJORAR",
+    "OBS / CAMBIO",
 }
 
 OBS_FIELDS = {
@@ -67,32 +82,34 @@ TABLE_NAME = "T_Subastas"
 SHEET_NAME = "Subastas"
 
 MONEY_COLS = {
-    "COSTO USD",
-    "COSTO FINAL PESOS",
-    "SUBTOTAL COSTO PESOS",
-    "P.UNIT MINIMO",
-    "SUBTOTAL",
-    "Precio referencia",
-    "P. UNIT MEJORA",
-    "SUBTOTAL PARA MEJORAR",
-    "dif unit",
+    "COSTO UNIT USD",
+    "COSTO TOTAL USD",
+    "COSTO UNIT ARS",
+    "COSTO TOTAL ARS",
+    "PRECIO UNIT ACEPTABLE",
+    "PRECIO TOTAL ACEPTABLE",
+    "PRECIO DE REFERENCIA",
+    "PRECIO REF UNITARIO",
+    "PRECIO UNIT MEJORA",
+    "OFERTA PARA MEJORAR",
 }
 
 PERCENT_COLS = {
-    "RENTA/ REF",
-    "Renta DPC",
+    "RENTA MINIMA %",
+    "RENTA REFERENCIA %",
+    "RENTA PARA MEJORAR %",
 }
 
 # Se mantiene por referencia conceptual, no se usa para escribir fórmulas
 FORMULAS = {
-    "COSTO USD": "=[@[COSTO FINAL PESOS]]/[@[CONVERSIÓN USD]]",
-    "SUBTOTAL COSTO PESOS": "=[@CANTIDAD]*[@[COSTO FINAL PESOS]]",
-    "P.UNIT MINIMO": "=[@RENTA]*[@[COSTO FINAL PESOS]]",
-    "SUBTOTAL": "=[@CANTIDAD]*[@[P.UNIT MINIMO]]",
-    "RENTA/ REF": "=[@[Precio referencia]]/[@[COSTO FINAL PESOS]]-1",
-    "P. UNIT MEJORA": "=[@[SUBTOTAL PARA MEJORAR]]/[@[CANTIDAD]]",
-    "dif unit": "=[@[P. UNIT MEJORA]]-[@[COSTO FINAL PESOS]]",
-    "Renta DPC": "=[@[P. UNIT MEJORA]]/[@[COSTO FINAL PESOS]]-1",
+    "COSTO UNIT USD": "=[@[COSTO UNIT ARS]]/[@[CONVERSIÓN USD]]",
+    "COSTO TOTAL USD": "=[@[COSTO TOTAL ARS]]/[@[CONVERSIÓN USD]]",
+    "PRECIO UNIT ACEPTABLE": "=(1+[@[RENTA MINIMA %]])*[@[COSTO UNIT ARS]]",
+    "PRECIO TOTAL ACEPTABLE": "=(1+[@[RENTA MINIMA %]])*[@[COSTO TOTAL ARS]]",
+    "PRECIO REF UNITARIO": "=[@[PRECIO DE REFERENCIA]]/[@[CANTIDAD]]",
+    "RENTA REFERENCIA %": "=([@[PRECIO DE REFERENCIA]]/[@[COSTO TOTAL ARS]])-1",
+    "PRECIO UNIT MEJORA": "=[@[OFERTA PARA MEJORAR]]/[@[CANTIDAD]]",
+    "RENTA PARA MEJORAR %": "=([@[OFERTA PARA MEJORAR]]/[@[COSTO TOTAL ARS]])-1",
 }
 
 
@@ -147,32 +164,15 @@ def export_subasta_to_excel(*, rows: Iterable[dict], out_path: str) -> None:
     header_index = {name: i + 1 for i, name in enumerate(COLUMNS)}
     header_letter = {name: get_column_letter(i) for name, i in header_index.items()}
 
-    def col(name: str) -> str:
-        return header_letter[name]
-
-    # Fórmulas A1 (robustas)
-    rules = {
-        "COSTO USD": lambda r: f"={col('COSTO FINAL PESOS')}{r}/{col('CONVERSIÓN USD')}{r}",
-        "SUBTOTAL COSTO PESOS": lambda r: f"={col('CANTIDAD')}{r}*{col('COSTO FINAL PESOS')}{r}",
-        "P.UNIT MINIMO": lambda r: f"={col('RENTA')}{r}*{col('COSTO FINAL PESOS')}{r}",
-        "SUBTOTAL": lambda r: f"={col('CANTIDAD')}{r}*{col('P.UNIT MINIMO')}{r}",
-        "RENTA/ REF": lambda r: f"={col('Precio referencia')}{r}/{col('COSTO FINAL PESOS')}{r}-1",
-        "P. UNIT MEJORA": lambda r: f"={col('SUBTOTAL PARA MEJORAR')}{r}/{col('CANTIDAD')}{r}",
-        "dif unit": lambda r: f"={col('P. UNIT MEJORA')}{r}-{col('COSTO FINAL PESOS')}{r}",
-        "Renta DPC": lambda r: f"={col('P. UNIT MEJORA')}{r}/{col('COSTO FINAL PESOS')}{r}-1",
-    }
-
-    for col_name, builder in rules.items():
-        col_idx = header_index[col_name]
-        for r in range(2, max_row + 1):
-            ws.cell(row=r, column=col_idx).value = builder(r)
-
     # Formatos
     for col_name, col_idx in header_index.items():
         if col_name in MONEY_COLS:
             for r in range(2, max_row + 1):
                 ws.cell(row=r, column=col_idx).number_format = "$ #.##0,00"
-        if col_name in PERCENT_COLS:
+        if col_name == "RENTA MINIMA %":
+            for r in range(2, max_row + 1):
+                ws.cell(row=r, column=col_idx).number_format = "0,00"
+        elif col_name in PERCENT_COLS:
             for r in range(2, max_row + 1):
                 ws.cell(row=r, column=col_idx).number_format = "0,00%"
 
@@ -185,15 +185,18 @@ def import_excel_to_rows(*, file_path: str) -> list[dict]:
 
     headers = [c.value for c in ws[1]]
     header_map = {_normalize_header(h): h for h in headers if h}
+    
+    # Requeridas (sin acentos, consistente con _normalize_header)
     required = {
         "ID SUBASTA",
         "ITEM",
         "UNIDAD DE MEDIDA",
         "MARCA",
-        "OBSERVACIONES",
+        "OBS USUARIO",
         "CONVERSION USD",
-        "COSTO FINAL PESOS",
-        "RENTA",
+        "COSTO UNIT ARS",
+        "COSTO TOTAL ARS",
+        "RENTA MINIMA %",
     }
     if not required.issubset(set(header_map.keys())):
         missing = sorted(required - set(header_map.keys()))
@@ -210,10 +213,23 @@ def import_excel_to_rows(*, file_path: str) -> list[dict]:
     for r in ws.iter_rows(min_row=2, values_only=True):
         if all(v is None for v in r):
             continue
-        row = {
+        
+        # Construir fila solo con USER_FIELDS (ignorar valores calculados y de Playwright)
+        row_raw = {
             reverse_headers.get(norm, norm): r[idx] if idx < len(r) else None
             for norm, idx in header_index.items()
         }
+        
+        # Filtrar: solo incluir ID, ITEM (para identificación) + USER_FIELDS
+        row = {}
+        for name in ["ID SUBASTA", "ITEM"]:
+            if name in row_raw:
+                row[name] = row_raw[name]
+        
+        for name in USER_FIELDS:
+            if name in row_raw:
+                row[name] = row_raw[name]
+        
         rows.append(row)
 
     return rows

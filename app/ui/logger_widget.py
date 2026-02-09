@@ -24,6 +24,8 @@ class LoggerWidget:
         ctk.CTkLabel(parent_frame, text="Logs:").pack(anchor="w", padx=10)
         self.text_widget = tk.Text(parent_frame, height=height)
         self.text_widget.pack(fill="both", expand=False, padx=10, pady=(0, 10))
+        self._last_msg: str | None = None
+        self._last_ts: datetime | None = None
     
     def log(self, msg: str, level: str = "INFO") -> None:
         """
@@ -37,11 +39,18 @@ class LoggerWidget:
         if self._should_skip(msg):
             return
         
-        ts = datetime.now().strftime("%H:%M:%S")
+        now = datetime.now()
+        if self._last_msg == msg and self._last_ts:
+            if (now - self._last_ts).total_seconds() <= 1.0:
+                return
+
+        ts = now.strftime("%H:%M:%S")
         formatted = f"[{ts}] {msg}\n"
         
         self.text_widget.insert("end", formatted)
         self.text_widget.see("end")  # Auto-scroll al final
+        self._last_msg = msg
+        self._last_ts = now
     
     def clear(self) -> None:
         """Limpia todos los logs."""
