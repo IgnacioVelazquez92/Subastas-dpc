@@ -240,14 +240,14 @@ class App(ctk.CTk):
         # Obtener configuración de tabla para crear treeview con columnas
         table_config = TableManager.get_default_config()
         
-        # Configurar estilo de Treeview: headers en 2 líneas con \n + tooltips dinámicos
-        # Los saltos de línea (\n) SÍ funcionan en ttk.Treeview headers
-        style = ttk.Style()
-        style.configure('Treeview', font=("Segoe UI", 11), rowheight=22)
-        style.configure('Treeview.Heading', font=("Segoe UI", 10, "bold"))
-        
         # Crear tabla con columnas correctas
-        self.tree = ttk.Treeview(body, columns=table_config.columns, show="headings", height=16)
+        self.tree = ttk.Treeview(
+            body,
+            columns=table_config.columns,
+            show="headings",
+            height=16,
+            selectmode="browse",
+        )
         self.tree.pack(side="top", fill="both", expand=True)
         self.tree.pack(side="top", fill="both", expand=True)
 
@@ -333,6 +333,10 @@ class App(ctk.CTk):
         menu.add_command(label="📋 Editar renglón", command=self.on_edit_row)
         menu.add_command(label="📊 Columnas", command=self.on_columns)
         menu.add_separator()
+        menu.add_command(label="Cabecera +", command=self._increase_header_height)
+        menu.add_command(label="Cabecera -", command=self._decrease_header_height)
+        menu.add_command(label="Cabecera reset", command=self._reset_header_height)
+        menu.add_separator()
         menu.add_command(label="📥 Importar Excel", command=self.on_import_excel)
         menu.add_command(label="📤 Exportar Excel", command=self.on_export_excel)
         menu.add_separator()
@@ -340,6 +344,24 @@ class App(ctk.CTk):
 
         # Mostrar menú en la posición del mouse
         menu.post(self.winfo_pointerx(), self.winfo_pointery())
+
+    def _increase_header_height(self) -> None:
+        if not self.table_mgr:
+            return
+        value = self.table_mgr.adjust_header_height(8)
+        self.logger.log(f"Cabecera tabla: {value}px")
+
+    def _decrease_header_height(self) -> None:
+        if not self.table_mgr:
+            return
+        value = self.table_mgr.adjust_header_height(-8)
+        self.logger.log(f"Cabecera tabla: {value}px")
+
+    def _reset_header_height(self) -> None:
+        if not self.table_mgr:
+            return
+        value = self.table_mgr.set_header_height(TableManager.HEADER_HEIGHT_PX)
+        self.logger.log(f"Cabecera tabla: {value}px (reset)")
 
     
     def _set_status(self, text: str) -> None:
@@ -726,27 +748,11 @@ class App(ctk.CTk):
         base_size = 11
         new_size = max(8, int(base_size * self.zoom_level))
         
-        # Recalcular altura de filas (para headers más visibles con wrap)
-        # Base: 40px para acomodar wraplength 100 (múltiples líneas)
-        new_row_height = max(30, int(40 * self.zoom_level))
-        
-        # Recalcular wrap length proporcionalmente (base 100 para forzar quiebres)
-        new_wrap_length = max(70, int(100 * self.zoom_level))
-        
-        # Calcular padding escalado
-        padding_v = max(5, int(15 * self.zoom_level))
-        padding_h = 5
-        
         # Actualizar fuentes en componentes principales
         try:
             # Fuente de tabla
             if self.table_mgr and self.table_mgr.tree:
-                style = ttk.Style()
-                style.configure('Treeview', font=("Segoe UI", new_size), rowheight=new_row_height)
-                style.configure('Treeview.Heading', 
-                               font=("Segoe UI", new_size, "bold"), 
-                               wraplength=new_wrap_length,
-                               padding=(padding_h, padding_v))
+                self.table_mgr.apply_zoom_style(self.zoom_level)
             
             # Fuente de logger
             if self.logger and hasattr(self.logger, 'text_widget'):

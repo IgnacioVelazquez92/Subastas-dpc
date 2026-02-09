@@ -7,6 +7,7 @@ Responsabilidad única: Convertir valores Python a strings formateados para Tkin
 
 from __future__ import annotations
 
+import re
 from typing import Optional
 from app.utils.money import float_to_money_txt
 
@@ -78,6 +79,11 @@ class DataFormatter:
         
         # Remover espacios y no-break spaces
         s = s.replace(" ", "").replace("\u00a0", "")
+        # Remover símbolos/etiquetas monetarias comunes
+        s = re.sub(r"(?i)ars|usd", "", s)
+        s = s.replace("$", "")
+        # Mantener solo dígitos, separadores y signo
+        s = re.sub(r"[^0-9,.\-]", "", s)
         
         try:
             if "," in s and "." in s:

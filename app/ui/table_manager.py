@@ -161,12 +161,16 @@ class TableConfig:
 class TableManager:
     """Gestiona la tabla Treeview: estructura, inserción, renderizado."""
     
-    # Altura definida para que quepan 2 líneas de texto en el header
-    ROW_HEIGHT = 45 
+    TREE_STYLE = "Monitor.Treeview"
+    HEADING_STYLE = "Monitor.Treeview.Heading"
+    ROW_HEIGHT = 30
+    HEADER_HEIGHT_PX = 68
 
     def __init__(self, tree: ttk.Treeview):
         self.tree = tree
         self.config = TableConfig()
+        self._zoom_level = 1.0
+        self._header_height_px = self.HEADER_HEIGHT_PX
         
         # Cache local para rápido acceso: id_renglon -> iid (tree internal id)
         self.iids: dict[str, str] = {}
@@ -188,11 +192,8 @@ class TableManager:
         """Configura estructura inicial de la tabla con estilos corregidos."""
         
         # --- CORRECCIÓN DE ALTURA DE FILAS Y ENCABEZADOS ---
-        style = ttk.Style()
-        # Esto aumenta la altura de TODAS las filas (incluyendo headers implícitamente en muchos temas)
-        # permitiendo que el \n se vea correctamente.
-        style.configure("Treeview", rowheight=self.ROW_HEIGHT) 
-        style.configure("Treeview.Heading", font=("Segoe UI", 9, "bold"), padding=(5, 5, 5, 25))
+        self._apply_style()
+        self.tree.configure(style=self.TREE_STYLE)
 
         # Primero, establecer las columnas en el treeview
         self.tree.configure(columns=self.config.columns)
@@ -207,6 +208,7 @@ class TableManager:
         
         # Asociar tooltips con la tabla
         self._setup_column_tooltips()
+        self._setup_selection_behavior()
         
         # --- CONFIGURACIÓN DE COLORES ESTILO EXCEL ---
         self.tree.tag_configure(RowStyle.NORMAL.value, background="", foreground="")
@@ -223,6 +225,61 @@ class TableManager:
         """Configura event binding para mostrar tooltips de columnas dinámicamente."""
         self.tree.bind("<Motion>", self._on_tree_motion, add="+")
         self.tree.bind("<Leave>", self._on_tree_leave, add="+")
+
+    def _compute_header_padding(self, *, zoom_level: float) -> tuple[int, int, int, int]:
+        """Calcula padding vertical de header a partir de altura manual objetivo."""
+        font_size = max(8, int(10 * zoom_level))
+        target_height = int(self._header_height_px * zoom_level)
+        vertical_padding = max(6, int((target_height - font_size - 2) / 2))
+        return (6, vertical_padding, 6, vertical_padding)
+
+    def _apply_style(self) -> None:
+        """Aplica estilo de tabla/cabecera con zoom y altura de header actual."""
+        style = ttk.Style()
+        font_size = max(8, int(11 * self._zoom_level))
+        row_height = max(26, int(self.ROW_HEIGHT * self._zoom_level))
+        header_padding = self._compute_header_padding(zoom_level=self._zoom_level)
+        style.configure(self.TREE_STYLE, font=("Segoe UI", font_size), rowheight=row_height)
+        style.configure(
+            self.HEADING_STYLE,
+            font=("Segoe UI", max(9, int(10 * self._zoom_level)), "bold"),
+            padding=header_padding,
+        )
+
+    def set_header_height(self, height_px: int) -> int:
+        """Define altura de cabecera en px y reaplica estilo."""
+        self._header_height_px = max(36, min(int(height_px), 180))
+        self._apply_style()
+        return self._header_height_px
+
+    def adjust_header_height(self, delta_px: int) -> int:
+        """Ajuste incremental de altura de cabecera."""
+        return self.set_header_height(self._header_height_px + int(delta_px))
+
+    def apply_zoom_style(self, zoom_level: float) -> None:
+        """Reaplica estilo de tabla y cabeceras acorde al zoom de la app."""
+        self._zoom_level = max(0.8, float(zoom_level))
+        self._apply_style()
+
+    def _setup_selection_behavior(self) -> None:
+        """Permite deseleccionar con click en fila ya seleccionada o en área vacía."""
+        self.tree.bind("<Button-1>", self._on_left_click_toggle_selection, add="+")
+        self.tree.bind("<Escape>", lambda _e: self.clear_selection(), add="+")
+
+    def _on_left_click_toggle_selection(self, event):
+        region = self.tree.identify_region(event.x, event.y)
+        iid = self.tree.identify_row(event.y)
+        selected = set(self.tree.selection())
+
+        if region in ("cell", "tree") and iid:
+            if iid in selected:
+                self.tree.after_idle(self.clear_selection)
+                return "break"
+            return None
+
+        if region == "nothing":
+            self.tree.after_idle(self.clear_selection)
+        return None
     
     def _on_tree_motion(self, event):
         """Detecta cuando el mouse entra a una columna y muestra tooltip."""
@@ -321,6 +378,13 @@ class TableManager:
         """Limpia toda la tabla."""
         self.tree.delete(*self.tree.get_children())
         self.iids.clear()
+
+    def clear_selection(self) -> None:
+        """Quita cualquier selección activa de la tabla."""
+        sel = self.tree.selection()
+        if sel:
+            self.tree.selection_remove(sel)
+        self.tree.focus("")
     
     def rebuild_from_snapshot(self, items: list[dict]) -> None:
         """Reconstruye tabla desde un snapshot."""

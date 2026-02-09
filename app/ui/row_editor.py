@@ -14,7 +14,7 @@ import customtkinter as ctk
 from tkinter import ttk, messagebox
 
 from app.models.domain import UIRow
-from app.core.alert_engine import RowStyle
+from app.core.alert_engine import AlertEngine
 from app.ui.formatters import DataFormatter
 from app.ui.table_manager import TableManager
 
@@ -127,6 +127,10 @@ class RowEditorDialog:
         self.table_mgr = table_mgr
         self.win = None
         self.entries: dict[str, tk.Widget] = {}
+        self.entry_vars: dict[str, tk.StringVar] = {}
+        self.money_fields = {"costo_unit_ars", "costo_total_ars"}
+        self._money_format_guard = False
+        self.alert_engine = AlertEngine()
         self.fmt = DataFormatter
         self.calc = RowCalculator
     
@@ -366,8 +370,10 @@ class RowEditorDialog:
             text_color="#333333" if not required else "#FF7043",
         ).pack(anchor="w")
         
+        var = tk.StringVar()
         ent = ctk.CTkEntry(
             frame,
+            textvariable=var,
             height=36,
             font=ctk.CTkFont(size=11),
             fg_color="#F9F9F9",
@@ -376,8 +382,19 @@ class RowEditorDialog:
             border_width=1,
         )
         ent.pack(fill="x", pady=(6, 0))
+        self.entry_vars[key] = var
         if value is not None:
-            ent.insert(0, str(value))
+            if key in self.money_fields:
+                parsed_value = self.fmt.parse_float(str(value))
+                if parsed_value is not None:
+                    var.set(self._format_money_for_edit(parsed_value))
+                else:
+                    var.set(str(value))
+            else:
+                var.set(str(value))
+
+        if key in self.money_fields:
+            self._bind_money_entry(ent, key)
         self.entries[key] = ent
         
         if help:
@@ -387,6 +404,80 @@ class RowEditorDialog:
                 font=ctk.CTkFont(size=9),
                 text_color="#999999",
             ).pack(anchor="w", pady=(4, 0))
+
+    def _bind_money_entry(self, entry: ctk.CTkEntry, key: str) -> None:
+        """Formatea campos de dinero en vivo para evitar errores con ceros."""
+        entry.bind("<KeyRelease>", lambda _e, k=key: self._on_money_key_release(k), add="+")
+        entry.bind("<FocusOut>", lambda _e, k=key: self._on_money_focus_out(k), add="+")
+
+    def _on_money_key_release(self, key: str) -> None:
+        if self._money_format_guard:
+            return
+        var = self.entry_vars.get(key)
+        if not var:
+            return
+        current = var.get()
+        formatted = self._format_money_for_edit_input(current)
+        if formatted != current:
+            self._money_format_guard = True
+            var.set(formatted)
+            self.entries[key].icursor("end")
+            self._money_format_guard = False
+
+    def _on_money_focus_out(self, key: str) -> None:
+        if self._money_format_guard:
+            return
+        var = self.entry_vars.get(key)
+        if not var:
+            return
+        parsed = self.fmt.parse_float(var.get())
+        if parsed is None:
+            return
+        self._money_format_guard = True
+        var.set(self._format_money_for_edit(parsed))
+        self._money_format_guard = False
+
+    @staticmethod
+    def _group_thousands(digits: str) -> str:
+        if not digits:
+            return ""
+        chunks = []
+        while digits:
+            chunks.append(digits[-3:])
+            digits = digits[:-3]
+        return ".".join(reversed(chunks))
+
+    def _format_money_for_edit_input(self, raw: str) -> str:
+        """Formato editable: separador de miles con '.' y decimal opcional con ','."""
+        if raw is None:
+            return ""
+        s = str(raw).strip()
+        if not s:
+            return ""
+
+        filtered = "".join(ch for ch in s if ch.isdigit() or ch in ",.")
+        if not filtered:
+            return ""
+
+        last_comma = filtered.rfind(",")
+        last_dot = filtered.rfind(".")
+        sep_pos = max(last_comma, last_dot)
+
+        decimal_part = ""
+        if sep_pos != -1 and (len(filtered) - sep_pos - 1) <= 2:
+            integer_digits = "".join(ch for ch in filtered[:sep_pos] if ch.isdigit())
+            decimal_part = "".join(ch for ch in filtered[sep_pos + 1 :] if ch.isdigit())[:2]
+        else:
+            integer_digits = "".join(ch for ch in filtered if ch.isdigit())
+
+        integer_fmt = self._group_thousands(integer_digits)
+        if decimal_part:
+            return f"{integer_fmt},{decimal_part}"
+        return integer_fmt
+
+    def _format_money_for_edit(self, value: float) -> str:
+        money = self.fmt.format_money(value)
+        return money.replace("$ ", "")
     
     def _save(self) -> None:
         """Guarda los cambios con validación mejorada."""
@@ -510,8 +601,8 @@ class RowEditorDialog:
         self.row.renta_minima = renta_minima
         self.row.seguir = bool(seguir)
         
-        # Renderizar con estilo TRACKED (el engine recalculará el color en el próximo UPDATE)
-        style = RowStyle.TRACKED.value if self.row.seguir or costo_unit_ars else RowStyle.NORMAL.value
+        # Aplicar color inmediatamente (sin esperar próximo UPDATE del collector)
+        style = self._resolve_row_style_after_edit()
         from app.ui.formatters import DisplayValues
         row_values = DisplayValues.build_row_values(self.row)
         self.table_mgr.render_row(self.row.id_renglon, row_values, style)
@@ -524,6 +615,33 @@ class RowEditorDialog:
         
         messagebox.showinfo("✅ Éxito", f"Se guardaron los cambios a {self.row.desc}")
         self.win.destroy()
+
+    def _resolve_row_style_after_edit(self) -> str:
+        """Replica lógica de alertas para colorear fila al instante tras edición."""
+        cfg = self.db_runtime.get_renglon_config(renglon_id=self.row.renglon_pk) or {}
+        tracked = bool(self.row.seguir or self.row.costo_unit_ars)
+        oferta_mia = bool(cfg.get("oferta_mia", False))
+        utilidad_min_pct = (
+            float(self.row.renta_minima) * 100.0
+            if self.row.renta_minima is not None
+            else float(cfg.get("utilidad_min_pct", 10.0))
+        )
+
+        utilidad_pct = None
+        if self.row.renta_para_mejorar is not None:
+            utilidad_pct = float(self.row.renta_para_mejorar) * 100.0
+
+        decision = self.alert_engine.decide(
+            tracked=tracked,
+            oferta_mia=oferta_mia,
+            utilidad_pct=utilidad_pct,
+            utilidad_min_pct=utilidad_min_pct,
+            ocultar_bajo_umbral=bool(cfg.get("ocultar_bajo_umbral", False)),
+            changed=False,
+            http_status=200,
+            mensaje="",
+        )
+        return decision.style.value
     
     def _recalculate_derived_fields(
         self,
