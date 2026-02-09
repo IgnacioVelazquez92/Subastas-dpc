@@ -67,12 +67,11 @@ class App(ctk.CTk):
         self.lbl_status: Optional[ctk.CTkLabel] = None
 
         # Filtros de tabla
-        self.filter_hide_empty = tk.BooleanVar(value=False)
         self.filter_with_cost = tk.BooleanVar(value=False)
         self.filter_tracked = tk.BooleanVar(value=False)
         self.filter_viable_only = tk.BooleanVar(value=False)
-        self.filter_empty_column = tk.StringVar(value="conv_usd")
-        self._filter_columns: list[str] = []
+        self.filter_search_text = tk.StringVar(value="")
+        self.filter_search_text.trace_add("write", lambda *_: self._on_filter_changed())
 
         self._build_ui()
 
@@ -183,30 +182,6 @@ class App(ctk.CTk):
 
         ctk.CTkSwitch(
             filter_bar,
-            text="Ocultar vacias",
-            variable=self.filter_hide_empty,
-            command=self._on_filter_changed,
-        ).pack(side="left", padx=6)
-
-        self._filter_columns = [
-            "conv_usd",
-            "costo_unit_usd",
-            "costo_total_usd",
-            "costo_unit_ars",
-            "costo_total_ars",
-            "renta_para_mejorar",
-        ]
-
-        ctk.CTkOptionMenu(
-            filter_bar,
-            values=self._filter_columns,
-            variable=self.filter_empty_column,
-            command=lambda _: self._on_filter_changed(),
-            width=160,
-        ).pack(side="left", padx=6)
-
-        ctk.CTkSwitch(
-            filter_bar,
             text="Solo con costo",
             variable=self.filter_with_cost,
             command=self._on_filter_changed,
@@ -224,6 +199,13 @@ class App(ctk.CTk):
             text="Solo en carrera",
             variable=self.filter_viable_only,
             command=self._on_filter_changed,
+        ).pack(side="left", padx=6)
+
+        ctk.CTkEntry(
+            filter_bar,
+            textvariable=self.filter_search_text,
+            placeholder_text="Buscar descripcion o renglon (ej: renglon 2)",
+            width=330,
         ).pack(side="left", padx=6)
 
         ctk.CTkButton(
@@ -395,18 +377,35 @@ class App(ctk.CTk):
 
     def _reset_filters(self) -> None:
         """Resetea todos los filtros y muestra todas las filas."""
-        self.filter_hide_empty.set(False)
         self.filter_with_cost.set(False)
         self.filter_tracked.set(False)
         self.filter_viable_only.set(False)
+        self.filter_search_text.set("")
         self._apply_filters()
+
+    @staticmethod
+    def _build_search_haystack(row: UIRow) -> str:
+        """Texto combinado para buscar por descripcion e identificador de renglon."""
+        rid = str(row.id_renglon or "").strip()
+        normalized_rid = rid.lstrip("#")
+        desc = str(row.desc or "").strip()
+        parts = [
+            desc,
+            rid,
+            normalized_rid,
+            f"renglon {normalized_rid}",
+            f"renglon #{normalized_rid}",
+            f"reglon {normalized_rid}",
+            f"reglon #{normalized_rid}",
+        ]
+        return " ".join(part.lower() for part in parts if part)
 
     def _apply_filters(self) -> None:
         """Aplica filtros sobre la tabla según estado actual de UI."""
         if not self.table_mgr:
             return
 
-        empty_col = self.filter_empty_column.get()
+        search_term = self.filter_search_text.get().strip().lower()
 
         def predicate(row: UIRow) -> bool:
             if self.filter_tracked.get() and not row.seguir:
@@ -423,14 +422,8 @@ class App(ctk.CTk):
                     if float(row.renta_para_mejorar) < float(row.renta_minima):
                         return False  # Ocultar (no está en carrera)
             
-            if self.filter_hide_empty.get():
-                if not hasattr(row, empty_col):
-                    return True
-                value = getattr(row, empty_col)
-                if value is None:
-                    return False
-                if isinstance(value, str) and not value.strip():
-                    return False
+            if search_term and search_term not in self._build_search_haystack(row):
+                return False
             return True
 
         self.table_mgr.apply_filter(self.rows, predicate)
