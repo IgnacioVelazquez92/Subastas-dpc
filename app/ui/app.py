@@ -90,8 +90,26 @@ class App(ctk.CTk):
     # -------------------------
     def _build_ui(self):
         """Construye estructura principal y crea managers."""
+        # Contenedor principal con scroll vertical para soportar zoom.
+        root_body = ctk.CTkFrame(self, fg_color="transparent")
+        root_body.pack(fill="both", expand=True)
+
+        self.main_canvas = tk.Canvas(root_body, highlightthickness=0)
+        self.main_canvas.pack(side="left", fill="both", expand=True)
+
+        self.main_vscroll = ttk.Scrollbar(root_body, orient="vertical", command=self.main_canvas.yview)
+        self.main_vscroll.pack(side="right", fill="y")
+        self.main_canvas.configure(yscrollcommand=self.main_vscroll.set)
+
+        self.main_content = ctk.CTkFrame(self.main_canvas, fg_color="transparent")
+        self.main_content_id = self.main_canvas.create_window((0, 0), window=self.main_content, anchor="nw")
+
+        self.main_content.bind("<Configure>", self._on_main_content_configure)
+        self.main_canvas.bind("<Configure>", self._on_main_canvas_configure)
+        self.main_canvas.bind_all("<MouseWheel>", self._on_main_mousewheel)
+
         # Panel superior con botones principales y LEDs
-        top = ctk.CTkFrame(self)
+        top = ctk.CTkFrame(self.main_content)
         top.pack(fill="x", padx=10, pady=10)
 
         # Botones principales (control)
@@ -154,7 +172,7 @@ class App(ctk.CTk):
         self.lbl_status.pack(side="right", padx=12)
 
         # Barra de filtros (debajo de los controles principales)
-        filter_bar = ctk.CTkFrame(self)
+        filter_bar = ctk.CTkFrame(self.main_content)
         filter_bar.pack(fill="x", padx=10, pady=(0, 10))
 
         ctk.CTkLabel(
@@ -216,7 +234,7 @@ class App(ctk.CTk):
         ).pack(side="right", padx=6)
 
         # Panel central: tabla
-        body = ctk.CTkFrame(self)
+        body = ctk.CTkFrame(self.main_content)
         body.pack(fill="both", expand=True, padx=10, pady=(0, 10))
 
         # Obtener configuración de tabla para crear treeview con columnas
@@ -248,7 +266,7 @@ class App(ctk.CTk):
         self.col_mgr = ColumnManager(self.tree, self.handles.runtime, self.table_mgr.config)
 
         # Logger mejorado
-        self.logger = LoggerWidget(self, height=8)
+        self.logger = LoggerWidget(self.main_content, height=8)
 
         # Event processor con referencia a LEDs
         self.event_processor = EventProcessor(
@@ -273,6 +291,38 @@ class App(ctk.CTk):
             "precio_unit_mejora", "renta_para_mejorar", "obs_cambio",
         ]
         self.col_mgr.load_visible_columns(default_cols)
+
+    def _on_main_content_configure(self, _event=None) -> None:
+        if hasattr(self, "main_canvas"):
+            self.main_canvas.configure(scrollregion=self.main_canvas.bbox("all"))
+
+    def _on_main_canvas_configure(self, event) -> None:
+        if hasattr(self, "main_content_id"):
+            self.main_canvas.itemconfigure(self.main_content_id, width=event.width)
+
+    def _on_main_mousewheel(self, event) -> None:
+        # Scroll vertical general de la ventana principal.
+        try:
+            # Si el foco está dentro de la tabla o logger, respetar su scroll nativo.
+            widget = event.widget
+            if self._is_descendant(widget, getattr(self, "tree", None)):
+                return
+            if self._is_descendant(widget, getattr(self.logger, "text_widget", None)):
+                return
+            self.main_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        except Exception:
+            pass
+
+    @staticmethod
+    def _is_descendant(widget, ancestor) -> bool:
+        if widget is None or ancestor is None:
+            return False
+        current = widget
+        while current is not None:
+            if current == ancestor:
+                return True
+            current = getattr(current, "master", None)
+        return False
 
 
     def _show_options_menu(self) -> None:

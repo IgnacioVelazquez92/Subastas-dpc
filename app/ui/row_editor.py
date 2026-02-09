@@ -450,12 +450,12 @@ class RowEditorDialog:
         
         # Guardar en DB
         seguir = self.check_seguir.get()
-        if utilidad_min_pct is not None or seguir:
-            self.db_runtime.update_renglon_config(
-                renglon_id=self.row.renglon_pk,
-                utilidad_min_pct=utilidad_min_pct,
-                seguir=seguir,
-            )
+        # Persistir siempre el estado de seguimiento (incluye desmarcar).
+        self.db_runtime.update_renglon_config(
+            renglon_id=self.row.renglon_pk,
+            utilidad_min_pct=utilidad_min_pct,
+            seguir=seguir,
+        )
         
         # 🔥 Recalcular campos derivados ANTES de guardar (para incluir USD)
         self._recalculate_derived_fields(
@@ -508,12 +508,19 @@ class RowEditorDialog:
         self.row.costo_unit_ars = costo_unit_ars
         self.row.costo_total_ars = costo_total_ars
         self.row.renta_minima = renta_minima
+        self.row.seguir = bool(seguir)
         
         # Renderizar con estilo TRACKED (el engine recalculará el color en el próximo UPDATE)
         style = RowStyle.TRACKED.value if self.row.seguir or costo_unit_ars else RowStyle.NORMAL.value
         from app.ui.formatters import DisplayValues
         row_values = DisplayValues.build_row_values(self.row)
         self.table_mgr.render_row(self.row.id_renglon, row_values, style)
+        try:
+            # Forzar reevaluacion de filtros del parent (e.g. "Solo seguimiento")
+            if hasattr(self.parent, "_apply_filters"):
+                self.parent._apply_filters()
+        except Exception:
+            pass
         
         messagebox.showinfo("✅ Éxito", f"Se guardaron los cambios a {self.row.desc}")
         self.win.destroy()
