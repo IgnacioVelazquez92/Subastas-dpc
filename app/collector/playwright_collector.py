@@ -96,6 +96,11 @@ class PlaywrightCollector(BaseCollector):
     # Public API
     # -------------------------
     def start(self) -> None:
+        # Si el thread murió inesperadamente, normalizar estado para permitir relanzar.
+        if self._thread is not None and not self._thread.is_alive():
+            self._running = False
+            self._thread = None
+
         if self._running:
             return
 
@@ -119,6 +124,12 @@ class PlaywrightCollector(BaseCollector):
         """
         self.cmd_q.put({"cmd": "capture_current"})
 
+    def stop_monitoring(self) -> None:
+        """
+        Comando: pausar solo el monitoreo (sin apagar todo el runtime).
+        """
+        self.cmd_q.put({"cmd": "stop_monitor"})
+
     def open_listado(self) -> None:
         """
         Comando: volver al listado (útil si el usuario se perdió).
@@ -132,32 +143,64 @@ class PlaywrightCollector(BaseCollector):
     # Internals
     # -------------------------
     def _run_thread(self) -> None:
-        asyncio.run(self._main())
+        try:
+            asyncio.run(self._main())
+        except Exception as e:
+            self.emit(error(EventType.EXCEPTION, f"PlaywrightCollector terminó por excepción: {e}"))
+        finally:
+            self._running = False
+            self._thread = None
+            self.emit(info(EventType.STOP, "PlaywrightCollector thread finalizado."))
 
     async def _main(self) -> None:
         poll_seconds = self.poll_seconds
 
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=self.headless)
-            ctx = await browser.new_context(ignore_https_errors=True)
-            page = await ctx.new_page()
+            browser = None
+            ctx = None
+            page = None
 
-            # Debug: detectar navegación a URL tokenizada de subasta
-            page.on(
-                "request",
-                lambda req: (
-                    self.emit(debug(EventType.HEARTBEAT, f"(DBG) Request Subasta: {req.url}"))
-                    if SUBASTA_URL_PART in req.url
-                    else None
-                ),
-            )
+            async def _create_browser_session():
+                try:
+                    _browser = await p.chromium.launch(headless=self.headless)
+                    _ctx = await _browser.new_context(ignore_https_errors=True)
+                    _page = await _ctx.new_page()
 
-            # Abrimos el listado al arrancar
-            try:
-                await page.goto(LISTADO_URL, wait_until="domcontentloaded")
-                self.emit(info(EventType.HEARTBEAT, f"Listado OK: {page.url}"))
-            except Exception as e:
-                self.emit(error(EventType.EXCEPTION, f"No se pudo abrir listado: {e}"))
+                    # Debug: detectar navegacion a URL tokenizada de subasta
+                    _page.on(
+                        "request",
+                        lambda req: (
+                            self.emit(debug(EventType.HEARTBEAT, f"(DBG) Request Subasta: {req.url}"))
+                            if SUBASTA_URL_PART in req.url
+                            else None
+                        ),
+                    )
+
+                    # Abrimos el listado al arrancar
+                    try:
+                        await _page.goto(LISTADO_URL, wait_until="domcontentloaded")
+                        self.emit(info(EventType.HEARTBEAT, f"Listado OK: {_page.url}"))
+                    except Exception as e:
+                        self.emit(error(EventType.EXCEPTION, f"No se pudo abrir listado: {e}"))
+
+                    return _browser, _ctx, _page
+                except Exception as e:
+                    self.emit(error(EventType.EXCEPTION, f"No se pudo crear sesion Playwright: {e}"))
+                    return None, None, None
+
+            async def _ensure_page() -> bool:
+                nonlocal browser, ctx, page
+                if page is not None:
+                    try:
+                        if not page.is_closed():
+                            return True
+                    except Exception:
+                        pass
+
+                browser, ctx, page = await _create_browser_session()
+                return page is not None
+
+            browser, ctx, page = await _create_browser_session()
 
             monitor_task: asyncio.Task | None = None
             tick = 0
@@ -184,14 +227,15 @@ class PlaywrightCollector(BaseCollector):
                     self.emit(info(EventType.HEARTBEAT, f"poll_seconds actualizado: {poll_seconds:.2f}s"))
 
                 elif name == "open_listado":
+                    if not await _ensure_page():
+                        continue
                     try:
                         await page.goto(LISTADO_URL, wait_until="domcontentloaded")
                         self.emit(info(EventType.HEARTBEAT, f"Listado OK: {page.url}"))
                     except Exception as e:
                         self.emit(error(EventType.EXCEPTION, f"Error abriendo listado: {e}"))
 
-                elif name == "capture_current":
-                    # Cancelar monitoreo anterior si existía
+                elif name == "stop_monitor":
                     if monitor_task and not monitor_task.done():
                         monitor_task.cancel()
                         try:
@@ -200,6 +244,22 @@ class PlaywrightCollector(BaseCollector):
                             pass
                         except Exception:
                             pass
+                    self.emit(info(EventType.STOP, "Monitoreo pausado por usuario."))
+
+                elif name == "capture_current":
+                    # Cancelar monitoreo anterior si existia
+                    if monitor_task and not monitor_task.done():
+                        monitor_task.cancel()
+                        try:
+                            await monitor_task
+                        except asyncio.CancelledError:
+                            pass
+                        except Exception:
+                            pass
+
+                    if not await _ensure_page():
+                        self.emit(warn(EventType.EXCEPTION, "No se pudo relanzar navegador para capturar."))
+                        continue
 
                     ok = await self._capture_current(page)
                     if ok:
@@ -239,9 +299,11 @@ class PlaywrightCollector(BaseCollector):
             except Exception:
                 pass
 
-            await browser.close()
-            self.emit(info(EventType.STOP, "PlaywrightCollector finalizado."))
-
+            try:
+                if browser:
+                    await browser.close()
+            except Exception:
+                pass
     @staticmethod
     def _normalize_desc(text: str) -> str:
         import unicodedata
@@ -436,6 +498,14 @@ class PlaywrightCollector(BaseCollector):
         self.emit(info(EventType.HEARTBEAT, f"Monitoreo activo: id_cot={id_cot} poll={poll_seconds:.2f}s"))
 
         while not self._stop_flag:
+            try:
+                if page.is_closed():
+                    self.emit(warn(EventType.STOP, "Navegador/pestana cerrada. Monitoreo pausado."))
+                    return
+            except Exception:
+                self.emit(warn(EventType.STOP, "No se pudo validar estado de pagina. Monitoreo pausado."))
+                return
+
             tick += 1
 
             if tick % 10 == 1:
@@ -457,6 +527,10 @@ class PlaywrightCollector(BaseCollector):
                 try:
                     res = await self._fetch_buscar_ofertas(page, payload)
                 except Exception as e:
+                    msg = str(e).lower()
+                    if "closed" in msg or "target page" in msg or "target closed" in msg:
+                        self.emit(warn(EventType.STOP, "Pagina cerrada durante monitoreo. Reabri navegador y recaptura."))
+                        return
                     self.emit(
                         error(
                             EventType.EXCEPTION,
@@ -618,3 +692,4 @@ class PlaywrightCollector(BaseCollector):
             "hora_ultima_oferta": hora_ultima_oferta,
             "mensaje": mensaje,
         }
+

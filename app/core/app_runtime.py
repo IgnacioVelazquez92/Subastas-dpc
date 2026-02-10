@@ -327,9 +327,28 @@ class AppRuntime:
 
     def start_collector(self) -> None:
         try:
+            if getattr(self.collector, "running", False):
+                # Si ya esta corriendo, en Playwright intentamos abrir listado.
+                if hasattr(self.collector, "open_listado"):
+                    self.collector.open_listado()
+                return
             self.collector.start()
         except Exception as e:
             self.engine_out_q.put(info(EventType.EXCEPTION, f"Collector no pudo iniciar: {e}"))
+
+    def stop_collector(self) -> None:
+        """
+        Pausa el collector sin detener el runtime completo.
+        """
+        try:
+            # Playwright: si soporta pausa de monitoreo, usarla.
+            if hasattr(self.collector, "stop_monitoring"):
+                self.collector.stop_monitoring()
+            else:
+                self.collector.stop()
+            self.engine_out_q.put(info(EventType.STOP, "Collector pausado"))
+        except Exception as e:
+            self.engine_out_q.put(info(EventType.EXCEPTION, f"No se pudo pausar collector: {e}"))
 
     def cleanup_data(self, *, mode: str = "logs") -> None:
         """Limpia datos. Si mode != 'logs', pausa el collector temporalmente."""

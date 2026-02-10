@@ -114,6 +114,29 @@ class RowCalculator:
             return None
         return result - 1.0
 
+    @staticmethod
+    def resolve_cost_pair(
+        *,
+        costo_unit_ars: float | None,
+        costo_total_ars: float | None,
+        cantidad: float | None,
+        prefer: str = "total",
+    ) -> tuple[float | None, float | None]:
+        """Normaliza costos unitario/total usando la cantidad disponible."""
+        if cantidad in (None, 0):
+            return costo_unit_ars, costo_total_ars
+
+        if costo_unit_ars is not None and costo_total_ars is not None:
+            if prefer == "unit":
+                return float(costo_unit_ars), float(costo_unit_ars) * float(cantidad)
+            return float(costo_total_ars) / float(cantidad), float(costo_total_ars)
+
+        if costo_unit_ars is not None:
+            return float(costo_unit_ars), float(costo_unit_ars) * float(cantidad)
+        if costo_total_ars is not None:
+            return float(costo_total_ars) / float(cantidad), float(costo_total_ars)
+        return None, None
+
 
 class RowEditorDialog:
     """Diálogo para editar datos de un renglón."""
@@ -549,6 +572,18 @@ class RowEditorDialog:
                 "⚠️  Advertencia",
                 "CONVERSIÓN USD debe ser > 0 para cálculos correctos.",
             )
+
+        # Resolver costo unitario/total según el campo editado por el usuario.
+        prefer_cost = self._resolve_preferred_cost_field(
+            costo_unit_ars=costo_unit_ars,
+            costo_total_ars=costo_total_ars,
+        )
+        costo_unit_ars, costo_total_ars = self.calc.resolve_cost_pair(
+            costo_unit_ars=costo_unit_ars,
+            costo_total_ars=costo_total_ars,
+            cantidad=self.row.cantidad,
+            prefer=prefer_cost,
+        )
         
         # Guardar en DB
         seguir = self.check_seguir.get()
@@ -653,6 +688,32 @@ class RowEditorDialog:
             mensaje="",
         )
         return decision.style.value
+
+    @staticmethod
+    def _same_number(a: float | None, b: float | None, eps: float = 1e-9) -> bool:
+        if a is None and b is None:
+            return True
+        if a is None or b is None:
+            return False
+        return abs(float(a) - float(b)) <= eps
+
+    def _resolve_preferred_cost_field(
+        self,
+        *,
+        costo_unit_ars: float | None,
+        costo_total_ars: float | None,
+    ) -> str:
+        """
+        Define prioridad cuando ambos costos están presentes:
+        - Solo cambio unitario: priorizar unitario.
+        - Solo cambio total: priorizar total.
+        - Ambos cambiaron o ninguno: priorizar total (consistente con engine).
+        """
+        changed_unit = not self._same_number(costo_unit_ars, self.row.costo_unit_ars)
+        changed_total = not self._same_number(costo_total_ars, self.row.costo_total_ars)
+        if changed_unit and not changed_total:
+            return "unit"
+        return "total"
     
     def _recalculate_derived_fields(
         self,
@@ -662,12 +723,6 @@ class RowEditorDialog:
         renta_minima: float | None,
     ) -> None:
         """Recalcula e actualiza campos derivados en row."""
-        # Resolver bidirecionaldad costo unit <-> total
-        if costo_total_ars and self.row.cantidad:
-            costo_unit_ars = costo_total_ars / self.row.cantidad
-        elif costo_unit_ars and self.row.cantidad:
-            costo_total_ars = costo_unit_ars * self.row.cantidad
-        
         # 🔥 Costo USD (UNITARIO y TOTAL)
         if conv_usd not in (None, 0):
             if costo_unit_ars:

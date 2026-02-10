@@ -488,9 +488,9 @@ class App(ctk.CTk):
         self._apply_filters()
 
     def on_stop(self) -> None:
-        """Detiene la aplicación."""
-        self.handles.runtime.stop()
-        self.logger.log("⏹️  Deteniendo sistema...")
+        """Pausa supervision sin cerrar la aplicacion."""
+        self.handles.runtime.stop_collector()
+        self.logger.log("Supervision pausada. Reanuda con 'Abrir navegador' y luego 'Capturar actual'.")
 
     def on_start_browser(self) -> None:
         """Inicia collector según el modo (agnóstico a PLAYWRIGHT/MOCK)."""
