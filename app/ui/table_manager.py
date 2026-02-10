@@ -178,6 +178,7 @@ class TableManager:
         # Variables internas para tooltips y ordenamiento
         self._current_tooltip = None
         self._tooltip_col = None
+        self._tooltip_target: tuple[str, str] | None = None
         self._sort_state: dict[str, bool] = {}
         self._detached: set[str] = set()
         # Para "renta_para_mejorar" queremos empezar con orden descendente
@@ -282,73 +283,98 @@ class TableManager:
         return None
     
     def _on_tree_motion(self, event):
-        """Detecta cuando el mouse entra a una columna y muestra tooltip."""
-        # Verificar que estamos en la región de headers
+        """Muestra tooltip contextual al mover mouse por headers o celdas."""
         region = self.tree.identify_region(event.x, event.y)
-        if region != "heading":
-            self._hide_current_tooltip()
+        if region == "heading":
+            self._show_heading_tooltip(event)
             return
-        
-        # CRÍTICO: Obtener el nombre de columna directamente desde el heading identificado
-        # Esto funciona CORRECTAMENTE incluso con columnas ocultas/reordenadas
-        col_id = self.tree.identify_column(event.x)
-        if not col_id:
-            self._hide_current_tooltip()
+        if region in ("cell", "tree"):
+            self._show_cell_tooltip(event)
             return
-        
-        # col_id viene como '#1', '#2', etc.
-        # Necesitamos obtener el nombre real de la columna desde displaycolumns
-        try:
-            col_idx = int(col_id.replace('#', '')) - 1
-            # displaycolumns puede ser la lista de columnas visibles en orden actual
-            display_cols = self.tree.cget('displaycolumns')
-            if display_cols == '#all':
-                # Todas las columnas visibles en orden original
-                if 0 <= col_idx < len(self.config.columns):
-                    col = self.config.columns[col_idx]
-                else:
-                    return
-            else:
-                # Hay un subconjunto/reorden de columnas
-                if 0 <= col_idx < len(display_cols):
-                    col = display_cols[col_idx]
-                else:
-                    return
-        except (ValueError, IndexError):
-            return
-        
-        # Si ya mostramos tooltip de esta columna, no hacer nada
-        if self._tooltip_col == col and self._current_tooltip:
-            return
-        
-        # Ocultar tooltip anterior sí existe
         self._hide_current_tooltip()
-        
-        # Obtener descripción completa de la columna
-        full_name = self.config.column_tooltips.get(col, col)
-        short_name = self.config.column_labels.get(col, col)
-        
-        # Crear tooltip
+
+    def _resolve_column_key(self, col_id: str) -> str | None:
+        """Mapea '#N' al nombre real de columna visible."""
+        if not col_id:
+            return None
+        try:
+            col_idx = int(col_id.replace("#", "")) - 1
+            display_cols = self.tree.cget("displaycolumns")
+            if display_cols == "#all":
+                if 0 <= col_idx < len(self.config.columns):
+                    return self.config.columns[col_idx]
+                return None
+            if 0 <= col_idx < len(display_cols):
+                return display_cols[col_idx]
+            return None
+        except (ValueError, IndexError):
+            return None
+
+    def _show_heading_tooltip(self, event) -> None:
+        col = self._resolve_column_key(self.tree.identify_column(event.x))
+        if not col:
+            self._hide_current_tooltip()
+            return
+        target = ("heading", col)
+        if self._current_tooltip and self._tooltip_target == target:
+            return
+        text = self.config.column_tooltips.get(col, col)
+        x = self.tree.winfo_rootx() + event.x + 12
+        y = self.tree.winfo_rooty() + self.ROW_HEIGHT + 8
+        self._show_tooltip(text=text, x=x, y=y, wraplength=260, target=target, col=col)
+
+    def _show_cell_tooltip(self, event) -> None:
+        iid = self.tree.identify_row(event.y)
+        col = self._resolve_column_key(self.tree.identify_column(event.x))
+        if not iid or not col:
+            self._hide_current_tooltip()
+            return
+
+        raw = self.tree.set(iid, col)
+        text = str(raw or "").strip()
+        if not text:
+            self._hide_current_tooltip()
+            return
+
+        target = (iid, col)
+        if self._current_tooltip and self._tooltip_target == target:
+            return
+
+        x = self.tree.winfo_rootx() + event.x + 14
+        y = self.tree.winfo_rooty() + event.y + 18
+        self._show_tooltip(text=text, x=x, y=y, wraplength=720, target=target, col=col)
+
+    def _show_tooltip(
+        self,
+        *,
+        text: str,
+        x: int,
+        y: int,
+        wraplength: int,
+        target: tuple[str, str],
+        col: str | None = None,
+    ) -> None:
+        self._hide_current_tooltip()
+        self._tooltip_target = target
         self._tooltip_col = col
-        x = self.tree.winfo_rootx() + event.x
-        y = self.tree.winfo_rooty() + self.ROW_HEIGHT + 5
-        
+
         self._current_tooltip = tk.Toplevel(self.tree)
         self._current_tooltip.wm_overrideredirect(True)
         self._current_tooltip.wm_geometry(f"+{x}+{y}")
-        
-        # Label con fondo amarillo claro (Tooltip estándar)
+
         label = tk.Label(
             self._current_tooltip,
-            text=full_name,
+            text=text,
             background="#fffacd",
             foreground="#000000",
             relief="solid",
             borderwidth=1,
             font=("Segoe UI", 9),
-            padx=5,
-            pady=3,
-            wraplength=200
+            justify="left",
+            anchor="w",
+            padx=6,
+            pady=4,
+            wraplength=wraplength,
         )
         label.pack()
     
@@ -365,6 +391,7 @@ class TableManager:
                 pass
             self._current_tooltip = None
             self._tooltip_col = None
+            self._tooltip_target = None
         
         # Bindings para sorting en columnas clave (se refrescan para asegurar binding)
         self.tree.heading("item", command=lambda: self._sort_by_column("item", numeric=True))

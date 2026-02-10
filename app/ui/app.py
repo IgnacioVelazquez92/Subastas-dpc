@@ -131,8 +131,8 @@ class App(ctk.CTk):
 
         ctk.CTkButton(
             control_frame,
-            text="🔄 Actualizar",
-            command=self.on_refresh_ui,
+            text="📋 Editar renglón",
+            command=self.on_edit_row,
             width=120,
         ).pack(side="left", padx=4)
 
@@ -312,7 +312,7 @@ class App(ctk.CTk):
         # Crear un menú contextual
         menu = tk.Menu(self, tearoff=False, bg="#2B2B2B", fg="#FFFFFF")
 
-        menu.add_command(label="📋 Editar renglón", command=self.on_edit_row)
+        menu.add_command(label="🔄 Actualizar", command=self.on_refresh_ui)
         menu.add_command(label="📊 Columnas", command=self.on_columns)
         menu.add_separator()
         menu.add_command(label="Cabecera +", command=self._increase_header_height)
