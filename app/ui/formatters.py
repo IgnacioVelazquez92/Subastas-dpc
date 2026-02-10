@@ -97,7 +97,7 @@ class DataFormatter:
                     
             elif "," in s:
                 parts = s.split(",")
-                if len(parts) > 2 and all(len(p) == 3 for p in parts[1:]):
+                if len(parts) > 1 and all(len(p) == 3 for p in parts[1:]):
                     # Separadores de miles: 1,234,567
                     s = "".join(parts)
                 elif len(parts) > 1:
@@ -106,7 +106,7 @@ class DataFormatter:
                     
             elif "." in s:
                 parts = s.split(".")
-                if len(parts) > 2 and all(len(p) == 3 for p in parts[1:]):
+                if len(parts) > 1 and all(len(p) == 3 for p in parts[1:]):
                     # Separadores de miles: 1.234.567
                     s = "".join(parts)
                 elif len(parts) > 1:

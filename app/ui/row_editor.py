@@ -83,6 +83,17 @@ class RowCalculator:
         if result is None:
             return None
         return result - 1.0
+
+    @staticmethod
+    def calculate_renta_referencia_total(
+        precio_ref_total: float,
+        costo_total_ars: float
+    ) -> float | None:
+        """Renta Referencia = (Precio Ref Total / Costo Total ARS) - 1."""
+        result = RowCalculator.safe_div(precio_ref_total, costo_total_ars)
+        if result is None:
+            return None
+        return result - 1.0
     
     @staticmethod
     def calculate_precio_unit_mejora(
@@ -619,7 +630,7 @@ class RowEditorDialog:
     def _resolve_row_style_after_edit(self) -> str:
         """Replica lógica de alertas para colorear fila al instante tras edición."""
         cfg = self.db_runtime.get_renglon_config(renglon_id=self.row.renglon_pk) or {}
-        tracked = bool(self.row.seguir or self.row.costo_unit_ars)
+        tracked = bool(self.row.seguir or self.row.costo_unit_ars or self.row.costo_total_ars)
         oferta_mia = bool(cfg.get("oferta_mia", False))
         utilidad_min_pct = (
             float(self.row.renta_minima) * 100.0
@@ -674,10 +685,17 @@ class RowEditorDialog:
             self.row.cantidad, self.row.precio_unit_aceptable
         ) if self.row.cantidad and self.row.precio_unit_aceptable else None
         
-        # Renta Referencia
-        self.row.renta_referencia = self.calc.calculate_renta_referencia(
-            self.row.precio_ref_unitario, costo_unit_ars
-        ) if self.row.precio_ref_unitario and costo_unit_ars else None
+        # Renta Referencia: priorizar TOTAL vs TOTAL, fallback UNIT vs UNIT.
+        if self.row.precio_referencia and costo_total_ars:
+            self.row.renta_referencia = self.calc.calculate_renta_referencia_total(
+                self.row.precio_referencia, costo_total_ars
+            )
+        elif self.row.precio_ref_unitario and costo_unit_ars:
+            self.row.renta_referencia = self.calc.calculate_renta_referencia(
+                self.row.precio_ref_unitario, costo_unit_ars
+            )
+        else:
+            self.row.renta_referencia = None
         
         # Precio Unit Mejora
         self.row.precio_unit_mejora = self.calc.calculate_precio_unit_mejora(

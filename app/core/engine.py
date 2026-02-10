@@ -269,18 +269,27 @@ class Engine:
 
             # Si la subasta trae cantidad/precio_ref, los guardamos como "del sistema"
             cantidad = r.get("cantidad")
-            precio_ref_total = r.get("precio_referencia")  # 🔥 SIEMPRE viene TOTAL de Playwright
+            precio_ref_total = r.get("precio_referencia")  # TOTAL (Presupuesto Oficial)
+            precio_ref_unit = r.get("precio_ref_unitario")  # UNITARIO (Precio de referencia)
             presupuesto_ref = r.get("presupuesto")
-            
-            # 🔥 Calcular precio_ref_unitario SOLO si tenemos cantidad
-            precio_ref_unit = None
-            if precio_ref_total is not None and cantidad not in (None, 0):
+
+            # Fallback de compatibilidad: si no vino TOTAL en el campo principal, usar presupuesto.
+            if precio_ref_total is None:
+                precio_ref_total = presupuesto_ref
+
+            # Fallback: si no vino UNITARIO desde Playwright, derivarlo desde TOTAL/cantidad.
+            if precio_ref_unit is None and precio_ref_total is not None and cantidad not in (None, 0):
                 try:
                     precio_ref_unit = float(precio_ref_total) / float(cantidad)
                 except Exception:
                     precio_ref_unit = None
 
-            if cantidad is not None or precio_ref_total is not None:
+            if (
+                cantidad is not None
+                or precio_ref_total is not None
+                or precio_ref_unit is not None
+                or presupuesto_ref is not None
+            ):
                 existing = self.db.get_renglon_excel(renglon_id=pk) or {}
                 self.db.upsert_renglon_excel(
                     renglon_id=pk,
@@ -303,7 +312,7 @@ class Engine:
                     precio_ref_unitario=(
                         existing.get("precio_ref_unitario")
                         if precio_ref_unit is None
-                        else precio_ref_unit  # Guardar UNITARIO calculado
+                        else precio_ref_unit  # Guardar UNITARIO (Playwright o fallback)
                     ),
                     renta_referencia=existing.get("renta_referencia"),
                     precio_unit_aceptable=existing.get("precio_unit_aceptable"),
@@ -539,24 +548,32 @@ class Engine:
             print(f"  precio_unit_aceptable (sin datos) = {precio_unit_aceptable}")
             print(f"  precio_total_aceptable (sin datos) = {precio_total_aceptable}")
 
-        # Precio referencia unitario (si no está en la BD)
+        # Precio referencia unitario: usar el de Playwright/BD y solo derivar si falta.
         if should_log:
             print(f"\n[CALC] Precio referencia unitario:")
-        if precio_referencia is not None:
-            # 🔥 precio_referencia es TOTAL, dividir por cantidad para obtener UNITARIO
+        if precio_ref_unitario is None and precio_referencia is not None:
+            # precio_referencia es TOTAL, dividir por cantidad para obtener UNITARIO
             precio_ref_unitario = self._safe_div(precio_referencia, cantidad)
             if should_log:
-                print(f"  precio_ref_unitario = {precio_referencia} / {cantidad} = {precio_ref_unitario}")
+                print(f"  precio_ref_unitario (derivado) = {precio_referencia} / {cantidad} = {precio_ref_unitario}")
         elif should_log:
-            print(f"  precio_ref_unitario (sin datos) = {precio_ref_unitario}")
+            if precio_ref_unitario is not None:
+                print(f"  precio_ref_unitario (existente) = {precio_ref_unitario}")
+            else:
+                print(f"  precio_ref_unitario (sin datos) = {precio_ref_unitario}")
 
         # Rentabilidad sobre referencia
         if should_log:
             print(f"\n[CALC] Rentabilidad referencia:")
-        if precio_ref_unitario is not None and costo_unit_ars not in (None, 0):
+        # Regla: priorizar comparación TOTAL vs TOTAL (más robusta), fallback UNIT vs UNIT.
+        if precio_referencia is not None and costo_total_ars not in (None, 0):
+            renta_referencia = (float(precio_referencia) / float(costo_total_ars)) - 1.0
+            if should_log:
+                print(f"  renta_referencia (TOTAL) = ({precio_referencia} / {costo_total_ars}) - 1 = {renta_referencia:.2%}")
+        elif precio_ref_unitario is not None and costo_unit_ars not in (None, 0):
             renta_referencia = (float(precio_ref_unitario) / float(costo_unit_ars)) - 1.0
             if should_log:
-                print(f"  renta_referencia = ({precio_ref_unitario} / {costo_unit_ars}) - 1 = {renta_referencia:.2%}")
+                print(f"  renta_referencia (UNIT) = ({precio_ref_unitario} / {costo_unit_ars}) - 1 = {renta_referencia:.2%}")
         elif should_log:
             print(f"  renta_referencia (sin datos) = {renta_referencia}")
 
@@ -607,12 +624,21 @@ class Engine:
                 print(f"  renta_minima={renta_minima:.2f} (fracción) → utilidad_min_pct={utilidad_min_pct:.2f}%")
 
         base_cost = costo_subtotal
-        if base_cost is None and costo_unit_ars is not None:
-            base_cost = costo_unit_ars
+        if base_cost is None:
+            # oferta_min_val viene como TOTAL, así que priorizamos costo TOTAL.
+            if costo_total_ars is not None:
+                base_cost = costo_total_ars
+            elif costo_unit_ars is not None and cantidad not in (None, 0):
+                base_cost = self._safe_mul(costo_unit_ars, cantidad)
+            elif costo_unit_ars is not None:
+                base_cost = costo_unit_ars
 
         if should_log:
             print(f"\n[CALC] Utilidad porcentual (CRÍTICO para coloración):")
-            print(f"  base_cost = {base_cost} (costo_subtotal={costo_subtotal} o costo_unit_ars={costo_unit_ars})")
+            print(
+                f"  base_cost = {base_cost} "
+                f"(costo_subtotal={costo_subtotal}, costo_total_ars={costo_total_ars}, costo_unit_ars={costo_unit_ars})"
+            )
             print(f"  oferta_min_val = {oferta_min_val}")
         
         utilidad_pct = None

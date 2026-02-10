@@ -267,7 +267,7 @@ class PlaywrightCollector(BaseCollector):
             desc = cells[0]
             is_resumen = str(desc).strip().upper().startswith("RENGLON ")
             cantidad_txt = cells[1]
-            precio_ref_txt = cells[2]
+            precio_ref_unit_txt = cells[2]
             presupuesto_txt = cells[3]
             cantidad = None
             try:
@@ -276,7 +276,7 @@ class PlaywrightCollector(BaseCollector):
                 cantidad = None
 
             from app.utils.money import money_to_float
-            precio_ref = money_to_float(precio_ref_txt)
+            precio_ref_unit = money_to_float(precio_ref_unit_txt)
             presupuesto = money_to_float(presupuesto_txt)
 
             rows.append({
@@ -284,7 +284,10 @@ class PlaywrightCollector(BaseCollector):
                 "descripcion": desc,
                 "is_resumen": is_resumen,
                 "cantidad": cantidad,
-                "precio_referencia": precio_ref,
+                # Precio de referencia unitario (columna 3)
+                "precio_ref_unitario": precio_ref_unit,
+                # Precio de referencia total / Presupuesto Oficial (columna 4)
+                "precio_referencia": presupuesto,
                 "presupuesto": presupuesto,
             })
 
@@ -368,6 +371,7 @@ class PlaywrightCollector(BaseCollector):
                 **opt,
                 "cantidad": det.get("cantidad"),
                 "precio_referencia": det.get("precio_referencia"),
+                "precio_ref_unitario": det.get("precio_ref_unitario"),
                 "presupuesto": det.get("presupuesto"),
             })
         options = enriched

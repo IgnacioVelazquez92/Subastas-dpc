@@ -218,7 +218,15 @@ class AppRuntime:
                 if "," in s and "." in s:
                     s = s.replace(".", "").replace(",", ".")
                 elif "," in s and "." not in s:
-                    s = s.replace(",", ".")
+                    parts = s.split(",")
+                    if len(parts) > 1 and all(len(p) == 3 for p in parts[1:]):
+                        s = "".join(parts)
+                    else:
+                        s = s.replace(",", ".")
+                elif "." in s and "," not in s:
+                    parts = s.split(".")
+                    if len(parts) > 1 and all(len(p) == 3 for p in parts[1:]):
+                        s = "".join(parts)
                 return float(s)
             except Exception:
                 return None
