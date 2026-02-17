@@ -277,12 +277,13 @@ class Engine:
             if precio_ref_total is None:
                 precio_ref_total = presupuesto_ref
 
-            # Fallback: si no vino UNITARIO desde Playwright, derivarlo desde TOTAL/cantidad.
-            if precio_ref_unit is None and precio_ref_total is not None and cantidad not in (None, 0):
-                try:
-                    precio_ref_unit = float(precio_ref_total) / float(cantidad)
-                except Exception:
-                    precio_ref_unit = None
+            # Resolver unitario de referencia de forma consistente por renglón:
+            # priorizar presupuesto/cantidad y dejar precio_referencia como fallback.
+            precio_ref_unit = self._resolve_precio_ref_unitario(
+                cantidad=cantidad,
+                precio_referencia=precio_ref_unit,
+                presupuesto=precio_ref_total,
+            )
 
             if (
                 cantidad is not None

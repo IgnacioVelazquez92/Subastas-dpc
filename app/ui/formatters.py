@@ -140,12 +140,12 @@ class DisplayValues:
             # IDs y b\u00e1sicos
             row.id_subasta or "",
             row.id_renglon,
-            fmt.truncate(row.desc, 80),
+            row.desc or "",
             fmt.format_number(row.cantidad, decimals=2),
             # Metadata usuario
             row.unidad_medida or "",
             row.marca or "",
-            fmt.truncate(row.obs_usuario or "", 40),
+            row.obs_usuario or "",
             # Costos
             fmt.format_number(row.conv_usd, decimals=2),
             fmt.format_number(row.costo_unit_usd, decimals=2),
@@ -166,7 +166,7 @@ class DisplayValues:
             fmt.format_money(row.precio_unit_mejora),
             fmt.format_percentage(row.renta_para_mejorar) if row.renta_para_mejorar is not None else "",
             # Observaciones
-            fmt.truncate(row.obs_cambio or "", 60),
+            row.obs_cambio or "",
         )
         
         return values

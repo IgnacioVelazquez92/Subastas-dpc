@@ -312,6 +312,80 @@ class PlaywrightCollector(BaseCollector):
         norm = unicodedata.normalize("NFKD", raw)
         return "".join(ch for ch in norm if not unicodedata.combining(ch))
 
+    @classmethod
+    def _normalize_renglon_key(cls, text: str) -> str:
+        """
+        Normaliza etiquetas de renglon para mejorar matching entre:
+        - option del select (ej: "Renglón 1 - Insumos")
+        - fila resumen de la grilla (ej: "RENGLON INSUMOS ...")
+        """
+        import re
+
+        key = cls._normalize_desc(text)
+        key = re.sub(r"^renglon\s*", "", key).strip()
+        key = re.sub(r"^\d+\s*[-:.]?\s*", "", key).strip()
+        return key
+
+    @classmethod
+    def _token_overlap_score(cls, a: str, b: str) -> int:
+        import re
+
+        ta = {t for t in re.findall(r"[a-z0-9]+", cls._normalize_renglon_key(a)) if len(t) >= 3}
+        tb = {t for t in re.findall(r"[a-z0-9]+", cls._normalize_renglon_key(b)) if len(t) >= 3}
+        if not ta or not tb:
+            return 0
+        return len(ta & tb)
+
+    @classmethod
+    def _match_resumen_row(
+        cls,
+        *,
+        option_text: str,
+        resumen_rows: list[dict],
+        used_resumen_indices: set[int],
+    ) -> dict | None:
+        if not resumen_rows:
+            return None
+
+        option_norm = cls._normalize_desc(option_text)
+        option_key = cls._normalize_renglon_key(option_text)
+
+        # 1) Match exacto por descripción completa normalizada.
+        for i, row in enumerate(resumen_rows):
+            if i in used_resumen_indices:
+                continue
+            row_desc = row.get("descripcion", "")
+            if cls._normalize_desc(row_desc) == option_norm:
+                used_resumen_indices.add(i)
+                return row
+
+        # 2) Match por key de renglón sin prefijo.
+        for i, row in enumerate(resumen_rows):
+            if i in used_resumen_indices:
+                continue
+            row_desc = row.get("descripcion", "")
+            row_key = cls._normalize_renglon_key(row_desc)
+            if row_key and option_key and (row_key == option_key or row_key in option_key or option_key in row_key):
+                used_resumen_indices.add(i)
+                return row
+
+        # 3) Match por superposición de tokens.
+        best_idx = None
+        best_score = 0
+        for i, row in enumerate(resumen_rows):
+            if i in used_resumen_indices:
+                continue
+            score = cls._token_overlap_score(option_text, row.get("descripcion", ""))
+            if score > best_score:
+                best_score = score
+                best_idx = i
+
+        if best_idx is not None and best_score > 0:
+            used_resumen_indices.add(best_idx)
+            return resumen_rows[best_idx]
+
+        return None
+
     async def _parse_detalle_table(self, page) -> list[dict]:
         rows = []
         try:
@@ -338,15 +412,26 @@ class PlaywrightCollector(BaseCollector):
                 cantidad = None
 
             from app.utils.money import money_to_float
-            precio_ref_unit = money_to_float(precio_ref_unit_txt)
+            precio_ref_col3 = money_to_float(precio_ref_unit_txt)
             presupuesto = money_to_float(presupuesto_txt)
+
+            # En fila resumen (RENGLON ...), la columna 3 no es unitario confiable.
+            # Derivamos unitario consistente como TOTAL / CANTIDAD.
+            precio_ref_unit = precio_ref_col3
+            if is_resumen and presupuesto is not None and cantidad not in (None, 0):
+                try:
+                    precio_ref_unit = float(presupuesto) / float(cantidad)
+                except Exception:
+                    precio_ref_unit = None
 
             rows.append({
                 "idx": idx,
                 "descripcion": desc,
                 "is_resumen": is_resumen,
                 "cantidad": cantidad,
-                # Precio de referencia unitario (columna 3)
+                # Unitario util para calculos internos:
+                # - detalle: columna 3
+                # - resumen: presupuesto / cantidad
                 "precio_ref_unitario": precio_ref_unit,
                 # Precio de referencia total / Presupuesto Oficial (columna 4)
                 "precio_referencia": presupuesto,
@@ -401,28 +486,48 @@ class PlaywrightCollector(BaseCollector):
         )
 
         detalle_rows = await self._parse_detalle_table(page)
-        detalle_map = {self._normalize_desc(r.get("descripcion", "")): r for r in detalle_rows}
+        detalle_map: dict[str, list[dict]] = {}
+        for row in detalle_rows:
+            k = self._normalize_desc(row.get("descripcion", ""))
+            detalle_map.setdefault(k, []).append(row)
         detalle_rows_no_resumen = [r for r in detalle_rows if not r.get("is_resumen")]
-        detalle_row_resumen = next((r for r in detalle_rows if r.get("is_resumen")), None)
+        detalle_rows_resumen = [r for r in detalle_rows if r.get("is_resumen")]
+        used_resumen_indices: set[int] = set()
+        used_detalle_indices_by_key: dict[str, int] = {}
 
         enriched = []
         for idx, opt in enumerate(options):
             key = self._normalize_desc(opt.get("text") or "")
-            det = detalle_map.get(key)
+            det = None
 
-            # Si el option corresponde al "renglon" total, priorizar fila resumen.
-            if not det and key.startswith("renglon ") and detalle_row_resumen:
-                det = detalle_row_resumen
+            # Match directo por descripcion; si hay duplicados, avanzar secuencialmente.
+            rows_for_key = detalle_map.get(key) or []
+            if rows_for_key:
+                use_idx = used_detalle_indices_by_key.get(key, 0)
+                if use_idx < len(rows_for_key):
+                    det = rows_for_key[use_idx]
+                    used_detalle_indices_by_key[key] = use_idx + 1
+                else:
+                    det = rows_for_key[-1]
 
-            # Si hay un solo option y existe resumen, para este tipo de subasta
-            # el dato correcto suele venir en la fila "RENGLON ...".
-            if not det and len(options) == 1 and detalle_row_resumen:
-                det = detalle_row_resumen
+            # Si no hubo match directo, intentar match contra filas resumen.
+            if det is None:
+                det = self._match_resumen_row(
+                    option_text=opt.get("text") or "",
+                    resumen_rows=detalle_rows_resumen,
+                    used_resumen_indices=used_resumen_indices,
+                )
+
+            # Fallback por orden cuando cantidad de options y resúmenes coincide.
+            if det is None and detalle_rows_resumen and len(options) == len(detalle_rows_resumen):
+                if idx < len(detalle_rows_resumen) and idx not in used_resumen_indices:
+                    det = detalle_rows_resumen[idx]
+                    used_resumen_indices.add(idx)
 
             # Fallback por posición solo cuando no hay resumen y tamaños compatibles.
             if (
                 not det
-                and not detalle_row_resumen
+                and not detalle_rows_resumen
                 and len(options) == len(detalle_rows_no_resumen)
                 and idx < len(detalle_rows_no_resumen)
             ):
@@ -473,6 +578,45 @@ class PlaywrightCollector(BaseCollector):
         m = re.search(r'Cargar_Parametro\(\s*"id_Cotizacion"\s*,\s*\'(\d+)\'', html)
         return m.group(1) if m else None
 
+    @staticmethod
+    def _chunked(items: list[dict], size: int) -> list[list[dict]]:
+        """Parte una lista en lotes de tamaño fijo."""
+        batch_size = max(1, int(size))
+        return [items[i:i + batch_size] for i in range(0, len(items), batch_size)]
+
+    async def _fetch_buscar_ofertas_batch(self, page, payloads: list[dict]) -> list[dict]:
+        """
+        Ejecuta múltiples fetch en paralelo dentro de la página.
+        Devuelve una lista alineada con payloads:
+          [{status, json, error?}, ...]
+        """
+        if not payloads:
+            return []
+        return await page.evaluate(
+            """async (batch) => {
+                const endpoint = "SubastaVivoAccesoPublico.aspx/BuscarOfertas";
+                const tasks = batch.map(async (p) => {
+                    try {
+                        const r = await fetch(endpoint, {
+                            method: "POST",
+                            headers: {
+                                "Content-Type": "application/json; charset=UTF-8",
+                                "X-Requested-With": "XMLHttpRequest"
+                            },
+                            body: JSON.stringify(p)
+                        });
+                        let j = null;
+                        try { j = await r.json(); } catch (_e) { j = null; }
+                        return { status: r.status, json: j };
+                    } catch (e) {
+                        return { status: 0, json: null, error: String(e || "fetch_error") };
+                    }
+                });
+                return await Promise.all(tasks);
+            }""",
+            payloads,
+        )
+
     async def _monitor_loop(self, page, poll_seconds: float) -> None:
         """
         Loop de monitoreo:
@@ -481,8 +625,8 @@ class PlaywrightCollector(BaseCollector):
         - parsea el campo "d" (cuando tengamos parser real) y emite UPDATE
 
         Nota operativa:
-        - poll_seconds se aplica ENTRE requests.
-          Con N renglones, el refresco por renglón es aproximadamente N * poll_seconds.
+        - poll_seconds se aplica ENTRE ciclos completos.
+          Evita que el refresco por renglón crezca linealmente con la cantidad de renglones.
         """
         id_cot = self.current.get("id_cot")
         margen = self.current.get("margen") or ""
@@ -494,10 +638,12 @@ class PlaywrightCollector(BaseCollector):
 
         last_sig: dict[str, str] = {}
         tick = 0
+        batch_size = 10
 
         self.emit(info(EventType.HEARTBEAT, f"Monitoreo activo: id_cot={id_cot} poll={poll_seconds:.2f}s"))
 
         while not self._stop_flag:
+            cycle_started = time.monotonic()
             try:
                 if page.is_closed():
                     self.emit(warn(EventType.STOP, "Navegador/pestana cerrada. Monitoreo pausado."))
@@ -511,109 +657,109 @@ class PlaywrightCollector(BaseCollector):
             if tick % 10 == 1:
                 self.emit(info(EventType.HEARTBEAT, f"Heartbeat monitor tick={tick} renglones={len(renglones)}"))
 
-            for opt in renglones:
+            for chunk in self._chunked(renglones, batch_size):
                 if self._stop_flag:
                     break
 
-                rid = opt.get("value")
-                desc = opt.get("text") or ""
-
-                payload = {
-                    "id_Cotizacion": id_cot,
-                    "id_Item_Renglon": rid,
-                    "Margen_Minimo": margen,
-                }
+                payloads = [
+                    {
+                        "id_Cotizacion": id_cot,
+                        "id_Item_Renglon": opt.get("value"),
+                        "Margen_Minimo": margen,
+                    }
+                    for opt in chunk
+                ]
 
                 try:
-                    res = await self._fetch_buscar_ofertas(page, payload)
+                    results = await self._fetch_buscar_ofertas_batch(page, payloads)
                 except Exception as e:
                     msg = str(e).lower()
                     if "closed" in msg or "target page" in msg or "target closed" in msg:
                         self.emit(warn(EventType.STOP, "Pagina cerrada durante monitoreo. Reabri navegador y recaptura."))
                         return
-                    self.emit(
-                        error(
-                            EventType.EXCEPTION,
-                            f"Fetch BuscarOfertas falló (renglon={rid}): {e}",
-                            payload={"id_renglon": rid},
-                        )
-                    )
-                    await asyncio.sleep(poll_seconds)
+                    self.emit(error(EventType.EXCEPTION, f"Fetch batch BuscarOfertas falló: {e}"))
                     continue
 
-                status = int(res.get("status", 0))
-                body = (res.get("json") or {})
+                for opt, res in zip(chunk, results):
+                    rid = opt.get("value")
+                    desc = opt.get("text") or ""
+                    status = int((res or {}).get("status", 0))
+                    body = ((res or {}).get("json") or {})
 
-                if status != 200:
-                    self.emit(
-                        warn(
-                            EventType.HTTP_ERROR,
-                            f"BuscarOfertas HTTP={status} (renglon={rid})",
-                            payload={"id_cot": id_cot, "id_renglon": rid, "desc": desc, "http_status": status},
+                    if status != 200:
+                        if status == 0:
+                            self.emit(
+                                error(
+                                    EventType.EXCEPTION,
+                                    f"Fetch BuscarOfertas falló (renglon={rid}): {(res or {}).get('error', 'error desconocido')}",
+                                    payload={"id_renglon": rid},
+                                )
+                            )
+                        else:
+                            self.emit(
+                                warn(
+                                    EventType.HTTP_ERROR,
+                                    f"BuscarOfertas HTTP={status} (renglon={rid})",
+                                    payload={"id_cot": id_cot, "id_renglon": rid, "desc": desc, "http_status": status},
+                                )
+                            )
+                        continue
+
+                    d = body.get("d", "") or ""
+                    parsed = self._parse_d_field(d)
+
+                    mejor_txt = parsed.get("mejor_oferta_txt", "")
+                    mejor_val = parsed.get("mejor_oferta_val")
+                    oferta_min_txt = parsed.get("oferta_min_txt", "")
+                    oferta_min_val = parsed.get("oferta_min_val")
+                    presupuesto_txt = parsed.get("presupuesto_txt", "")
+                    presupuesto_val = parsed.get("presupuesto_val")
+                    mensaje = parsed.get("mensaje", "") or ""
+                    hora_ultima_oferta = parsed.get("hora_ultima_oferta")
+
+                    sig = f"{mejor_txt}|{oferta_min_txt}|{mensaje}"
+                    changed = last_sig.get(rid) != sig
+                    last_sig[rid] = sig
+
+                    if changed:
+                        self.emit(
+                            info(
+                                EventType.HEARTBEAT,
+                                f"CAMBIO renglon={rid} mejor={mejor_txt} min={oferta_min_txt}",
+                                payload={"id_renglon": rid},
+                            )
                         )
-                    )
-                    await asyncio.sleep(poll_seconds)
-                    continue
 
-                d = body.get("d", "") or ""
-
-                # Parser del campo "d"
-                parsed = self._parse_d_field(d)
-
-                # Mejor oferta: la primera del array suele ser la vigente
-                mejor_txt = parsed.get("mejor_oferta_txt", "")
-                mejor_val = parsed.get("mejor_oferta_val")
-
-                oferta_min_txt = parsed.get("oferta_min_txt", "")
-                oferta_min_val = parsed.get("oferta_min_val")
-
-                presupuesto_txt = parsed.get("presupuesto_txt", "")
-                presupuesto_val = parsed.get("presupuesto_val")
-
-                mensaje = parsed.get("mensaje", "") or ""
-                hora_ultima_oferta = parsed.get("hora_ultima_oferta")
-
-                sig = f"{mejor_txt}|{oferta_min_txt}|{mensaje}"
-                changed = last_sig.get(rid) != sig
-                last_sig[rid] = sig
-
-                if changed:
                     self.emit(
                         info(
-                            EventType.HEARTBEAT,
-                            f"CAMBIO renglon={rid} mejor={mejor_txt} min={oferta_min_txt}",
-                            payload={"id_renglon": rid},
+                            EventType.UPDATE,
+                            f"Update renglón {rid}",
+                            payload={
+                                "id_cot": id_cot,
+                                "id_renglon": rid,
+                                "desc": desc,
+                                "mejor_oferta_txt": mejor_txt,
+                                "mejor_oferta_val": mejor_val,
+                                "oferta_min_txt": oferta_min_txt,
+                                "oferta_min_val": oferta_min_val,
+                                "presupuesto_txt": presupuesto_txt,
+                                "presupuesto_val": presupuesto_val,
+                                "mensaje": mensaje,
+                                "hora_ultima_oferta": hora_ultima_oferta,
+                                "changed": changed,
+                                "http_status": 200,
+                            },
                         )
                     )
 
-                self.emit(
-                    info(
-                        EventType.UPDATE,
-                        f"Update renglón {rid}",
-                        payload={
-                            "id_cot": id_cot,
-                            "id_renglon": rid,
-                            "desc": desc,
-                            "mejor_oferta_txt": mejor_txt,
-                            "mejor_oferta_val": mejor_val,
-                            "oferta_min_txt": oferta_min_txt,
-                            "oferta_min_val": oferta_min_val,
-                            "presupuesto_txt": presupuesto_txt,
-                            "presupuesto_val": presupuesto_val,
-                            "mensaje": mensaje,
-                            "hora_ultima_oferta": hora_ultima_oferta,
-                            "changed": changed,
-                            "http_status": 200,
-                        },
-                    )
-                )
+                    if "finalizada" in mensaje.lower():
+                        self.emit(info(EventType.END, f"Subasta finalizada detectada (renglon={rid})", payload={"id_cot": id_cot, "id_renglon": rid, "desc": desc}))
+                        return
 
-                # Detectar fin por mensaje (refinable)
-                if "finalizada" in mensaje.lower():
-                    self.emit(info(EventType.END, f"Subasta finalizada detectada (renglon={rid})", payload={"id_cot": id_cot, "id_renglon": rid, "desc": desc}))
-                    return
-
-                await asyncio.sleep(poll_seconds)
+            elapsed = time.monotonic() - cycle_started
+            sleep_for = max(0.0, float(poll_seconds) - elapsed)
+            if sleep_for > 0:
+                await asyncio.sleep(sleep_for)
 
         self.emit(info(EventType.STOP, "Monitoreo detenido (stop_flag=True)."))
 

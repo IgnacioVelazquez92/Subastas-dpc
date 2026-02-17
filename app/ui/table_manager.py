@@ -165,6 +165,11 @@ class TableManager:
     HEADING_STYLE = "Monitor.Treeview.Heading"
     ROW_HEIGHT = 30
     HEADER_HEIGHT_PX = 68
+    TOOLTIP_CELL_WRAP_PX = 380
+    TOOLTIP_CELL_MAX_WIDTH_PX = 420
+    TOOLTIP_HEADING_WRAP_PX = 240
+    TOOLTIP_HEADING_MAX_WIDTH_PX = 280
+    TOOLTIP_MARGIN_PX = 12
 
     def __init__(self, tree: ttk.Treeview):
         self.tree = tree
@@ -321,7 +326,15 @@ class TableManager:
         text = self.config.column_tooltips.get(col, col)
         x = self.tree.winfo_rootx() + event.x + 12
         y = self.tree.winfo_rooty() + self.ROW_HEIGHT + 8
-        self._show_tooltip(text=text, x=x, y=y, wraplength=260, target=target, col=col)
+        self._show_tooltip(
+            text=text,
+            x=x,
+            y=y,
+            wraplength=self.TOOLTIP_HEADING_WRAP_PX,
+            max_width=self.TOOLTIP_HEADING_MAX_WIDTH_PX,
+            target=target,
+            col=col,
+        )
 
     def _show_cell_tooltip(self, event) -> None:
         iid = self.tree.identify_row(event.y)
@@ -342,7 +355,15 @@ class TableManager:
 
         x = self.tree.winfo_rootx() + event.x + 14
         y = self.tree.winfo_rooty() + event.y + 18
-        self._show_tooltip(text=text, x=x, y=y, wraplength=720, target=target, col=col)
+        self._show_tooltip(
+            text=text,
+            x=x,
+            y=y,
+            wraplength=self.TOOLTIP_CELL_WRAP_PX,
+            max_width=self.TOOLTIP_CELL_MAX_WIDTH_PX,
+            target=target,
+            col=col,
+        )
 
     def _show_tooltip(
         self,
@@ -351,6 +372,7 @@ class TableManager:
         x: int,
         y: int,
         wraplength: int,
+        max_width: int,
         target: tuple[str, str],
         col: str | None = None,
     ) -> None:
@@ -377,6 +399,23 @@ class TableManager:
             wraplength=wraplength,
         )
         label.pack()
+        self._current_tooltip.update_idletasks()
+
+        # Limitar ancho visible y forzar multilínea cuando el texto es largo.
+        if max_width > 0 and label.winfo_reqwidth() > max_width:
+            label.configure(wraplength=max(80, max_width - 16))
+            self._current_tooltip.update_idletasks()
+
+        # Evitar que el tooltip se salga de la pantalla.
+        tip_w = self._current_tooltip.winfo_reqwidth()
+        tip_h = self._current_tooltip.winfo_reqheight()
+        screen_w = self.tree.winfo_screenwidth()
+        screen_h = self.tree.winfo_screenheight()
+        margin = self.TOOLTIP_MARGIN_PX
+
+        pos_x = min(max(margin, x), max(margin, screen_w - tip_w - margin))
+        pos_y = min(max(margin, y), max(margin, screen_h - tip_h - margin))
+        self._current_tooltip.wm_geometry(f"+{pos_x}+{pos_y}")
     
     def _on_tree_leave(self, event):
         """Oculta tooltip cuando el mouse sale de la tabla."""
@@ -428,7 +467,7 @@ class TableManager:
         initial_values = (
             "",  # id_subasta
             id_renglon,
-            desc[:80] if len(desc) > 80 else desc,
+            desc,
         ) + ("",) * (len(self.config.columns) - 3)
         
         iid = self.tree.insert(
