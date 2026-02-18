@@ -72,6 +72,7 @@ class App(ctk.CTk):
         self.filter_viable_only = tk.BooleanVar(value=False)
         self.filter_search_text = tk.StringVar(value="")
         self.filter_search_text.trace_add("write", lambda *_: self._on_filter_changed())
+        self.intensive_monitoring = tk.BooleanVar(value=True)
 
         self._build_ui()
 
@@ -150,6 +151,13 @@ class App(ctk.CTk):
             command=self._show_options_menu,
             width=120,
         ).pack(side="left", padx=4)
+
+        ctk.CTkSwitch(
+            control_frame,
+            text="Supervisión intensiva",
+            variable=self.intensive_monitoring,
+            command=self._on_toggle_intensive_monitoring,
+        ).pack(side="left", padx=8)
 
         # LEDs de estado
         leds_frame = ctk.CTkFrame(top, fg_color="transparent")
@@ -273,6 +281,7 @@ class App(ctk.CTk):
             "precio_unit_mejora", "renta_para_mejorar", "obs_cambio",
         ]
         self.col_mgr.load_visible_columns(default_cols)
+        self._on_toggle_intensive_monitoring()
 
     def _on_main_content_configure(self, _event=None) -> None:
         if hasattr(self, "main_canvas"):
@@ -439,6 +448,14 @@ class App(ctk.CTk):
         """Envia comando al collector para capturar estado actual."""
         self.collector_cmd_q.put({"cmd": "capture_current"})
         self.logger.log("📸 Captura de subasta actual solicitada...")
+
+    def _on_toggle_intensive_monitoring(self) -> None:
+        """Activa/desactiva monitoreo intensivo en caliente."""
+        enabled = bool(self.intensive_monitoring.get())
+        self.handles.runtime.set_intensive_monitoring(enabled=enabled)
+        if self.logger:
+            mode_txt = "INTENSIVA" if enabled else "SUEÑO"
+            self.logger.log(f"Modo de supervisión: {mode_txt}")
 
     def on_refresh_ui(self) -> None:
         """Refresca la UI leyendo datos actuales desde la BD."""

@@ -422,7 +422,7 @@ class Engine:
         obs_usuario = None
         conv_usd = None
         costo_unit_usd = None
-        precio_total_usd = None
+        costo_total_usd = None
         costo_unit_ars = None
         costo_total_ars = None
         renta_minima = None

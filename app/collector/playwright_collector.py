@@ -80,6 +80,8 @@ class PlaywrightCollector(BaseCollector):
 
         self.headless = bool(headless)
         self.poll_seconds = max(0.2, float(poll_seconds))
+        self.intensive_mode = True
+        self.relaxed_poll_seconds = max(10.0, self.poll_seconds * 10.0)
 
         self._thread: Thread | None = None
         self._stop_flag = False
@@ -138,6 +140,9 @@ class PlaywrightCollector(BaseCollector):
 
     def set_poll_seconds(self, seconds: float) -> None:
         self.cmd_q.put({"cmd": "set_poll", "seconds": float(seconds)})
+
+    def set_intensive_monitoring(self, enabled: bool) -> None:
+        self.cmd_q.put({"cmd": "set_intensive", "enabled": bool(enabled)})
 
     # -------------------------
     # Internals
@@ -224,7 +229,16 @@ class PlaywrightCollector(BaseCollector):
 
                 if name == "set_poll":
                     poll_seconds = max(0.2, float(cmd.get("seconds", poll_seconds)))
-                    self.emit(info(EventType.HEARTBEAT, f"poll_seconds actualizado: {poll_seconds:.2f}s"))
+                    self.poll_seconds = poll_seconds
+                    effective = self.poll_seconds if self.intensive_mode else self.relaxed_poll_seconds
+                    mode_txt = "INTENSIVA" if self.intensive_mode else "SUEÑO"
+                    self.emit(info(EventType.HEARTBEAT, f"poll_seconds actualizado: base={poll_seconds:.2f}s modo={mode_txt} efectivo={effective:.2f}s"))
+
+                elif name == "set_intensive":
+                    self.intensive_mode = bool(cmd.get("enabled", True))
+                    effective = self.poll_seconds if self.intensive_mode else self.relaxed_poll_seconds
+                    mode_txt = "INTENSIVA" if self.intensive_mode else "SUEÑO"
+                    self.emit(info(EventType.HEARTBEAT, f"Modo monitoreo: {mode_txt} (poll efectivo={effective:.2f}s)"))
 
                 elif name == "open_listado":
                     if not await _ensure_page():
@@ -533,6 +547,12 @@ class PlaywrightCollector(BaseCollector):
             ):
                 det = detalle_rows_no_resumen[idx]
 
+            # Si existe tabla resumen y esta option no pudo mapearse, se descarta.
+            # Evita renglones "fantasma" cuando el portal expone options por item
+            # pero la licitacion opera por un unico renglon resumen.
+            if det is None and detalle_rows_resumen:
+                continue
+
             det = det or {}
             enriched.append({
                 **opt,
@@ -638,9 +658,11 @@ class PlaywrightCollector(BaseCollector):
 
         last_sig: dict[str, str] = {}
         tick = 0
-        batch_size = 10
+        # Para lotes grandes (ej. 60 renglones) evitamos rondas secuenciales.
+        # Se consulta en paralelo dentro del navegador en tandas grandes.
+        batch_size = max(10, min(80, len(renglones)))
 
-        self.emit(info(EventType.HEARTBEAT, f"Monitoreo activo: id_cot={id_cot} poll={poll_seconds:.2f}s"))
+        self.emit(info(EventType.HEARTBEAT, f"Monitoreo activo: id_cot={id_cot} poll_base={self.poll_seconds:.2f}s"))
 
         while not self._stop_flag:
             cycle_started = time.monotonic()
@@ -657,9 +679,12 @@ class PlaywrightCollector(BaseCollector):
             if tick % 10 == 1:
                 self.emit(info(EventType.HEARTBEAT, f"Heartbeat monitor tick={tick} renglones={len(renglones)}"))
 
+            total_batches = 0
+            total_updates = 0
             for chunk in self._chunked(renglones, batch_size):
                 if self._stop_flag:
                     break
+                total_batches += 1
 
                 payloads = [
                     {
@@ -751,15 +776,31 @@ class PlaywrightCollector(BaseCollector):
                             },
                         )
                     )
+                    total_updates += 1
 
                     if "finalizada" in mensaje.lower():
                         self.emit(info(EventType.END, f"Subasta finalizada detectada (renglon={rid})", payload={"id_cot": id_cot, "id_renglon": rid, "desc": desc}))
                         return
 
             elapsed = time.monotonic() - cycle_started
-            sleep_for = max(0.0, float(poll_seconds) - elapsed)
+            effective_poll = self.poll_seconds if self.intensive_mode else self.relaxed_poll_seconds
+            sleep_for = max(0.0, float(effective_poll) - elapsed)
             if sleep_for > 0:
                 await asyncio.sleep(sleep_for)
+            cycle_total = elapsed + sleep_for
+
+            self.emit(
+                info(
+                    EventType.HEARTBEAT,
+                    (
+                        f"[METRICA] ciclo={tick} renglones={len(renglones)} "
+                        f"updates={total_updates} batches={total_batches} "
+                        f"intervalo_real_por_renglon={cycle_total:.2f}s "
+                        f"(modo={'INTENSIVA' if self.intensive_mode else 'SUEÑO'} "
+                        f"poll_efectivo={effective_poll:.2f}s)"
+                    ),
+                )
+            )
 
         self.emit(info(EventType.STOP, "Monitoreo detenido (stop_flag=True)."))
 

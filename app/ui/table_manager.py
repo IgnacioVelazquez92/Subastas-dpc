@@ -302,10 +302,14 @@ class TableManager:
         """Mapea '#N' al nombre real de columna visible."""
         if not col_id:
             return None
+        if not str(col_id).startswith("#"):
+            return str(col_id)
         try:
-            col_idx = int(col_id.replace("#", "")) - 1
+            col_idx = int(str(col_id).replace("#", "")) - 1
             display_cols = self.tree.cget("displaycolumns")
-            if display_cols == "#all":
+            if isinstance(display_cols, str):
+                display_cols = tuple(display_cols.split())
+            if display_cols in ("#all", ("#all",)):
                 if 0 <= col_idx < len(self.config.columns):
                     return self.config.columns[col_idx]
                 return None
@@ -382,7 +386,12 @@ class TableManager:
 
         self._current_tooltip = tk.Toplevel(self.tree)
         self._current_tooltip.wm_overrideredirect(True)
+        try:
+            self._current_tooltip.wm_attributes("-topmost", True)
+        except Exception:
+            pass
         self._current_tooltip.wm_geometry(f"+{x}+{y}")
+        self._current_tooltip.lift()
 
         label = tk.Label(
             self._current_tooltip,

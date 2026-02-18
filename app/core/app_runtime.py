@@ -350,6 +350,22 @@ class AppRuntime:
         except Exception as e:
             self.engine_out_q.put(info(EventType.EXCEPTION, f"No se pudo pausar collector: {e}"))
 
+    def set_intensive_monitoring(self, enabled: bool) -> None:
+        """
+        Alterna monitoreo intensivo en caliente.
+        - ON: usa poll base (por ejemplo 1s).
+        - OFF: usa modo sueño (poll más espaciado) manteniendo alertas.
+        """
+        try:
+            if hasattr(self.collector, "set_intensive_monitoring"):
+                self.collector.set_intensive_monitoring(bool(enabled))
+            elif self.mode == "PLAYWRIGHT":
+                self.collector_cmd_q.put({"cmd": "set_intensive", "enabled": bool(enabled)})
+            mode_txt = "INTENSIVA" if bool(enabled) else "SUEÑO"
+            self.engine_out_q.put(info(EventType.HEARTBEAT, f"Supervisión {mode_txt} solicitada por UI"))
+        except Exception as e:
+            self.engine_out_q.put(info(EventType.EXCEPTION, f"No se pudo cambiar modo intensivo: {e}"))
+
     def cleanup_data(self, *, mode: str = "logs") -> None:
         """Limpia datos. Si mode != 'logs', pausa el collector temporalmente."""
         was_running = False

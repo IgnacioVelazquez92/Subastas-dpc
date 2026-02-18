@@ -98,6 +98,12 @@ class EventProcessor:
             except Exception:
                 pass
             return
+
+        if ev.type == EventType.HEARTBEAT:
+            msg = str(ev.message or "")
+            if msg.startswith("[METRICA]"):
+                self.log(msg)
+            return
         
         # Otros eventos (HEARTBEAT, DEBUG) se ignoran en logs
     
