@@ -132,11 +132,12 @@ class DisplayValues:
         Convierte UIRow a tupla de strings para Treeview.
         
         Espera que row sea un UIRow con todos los atributos.
-        Retorna tupla de 23 strings en orden de self.cols.
+        Retorna tupla de strings en orden de self.cols.
         """
         fmt = DataFormatter
         
         values = (
+            row.update_led or "",
             # IDs y b\u00e1sicos
             row.id_subasta or "",
             row.id_renglon,

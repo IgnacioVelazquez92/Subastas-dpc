@@ -7,6 +7,7 @@ Responsabilidad única: Convertir eventos del motor en cambios de estado de tabl
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from typing import Optional
 
 from app.core.events import Event, EventType
@@ -100,9 +101,7 @@ class EventProcessor:
             return
 
         if ev.type == EventType.HEARTBEAT:
-            msg = str(ev.message or "")
-            if msg.startswith("[METRICA]"):
-                self.log(msg)
+            # Evitar spam en logs operativos.
             return
         
         # Otros eventos (HEARTBEAT, DEBUG) se ignoran en logs
@@ -137,6 +136,7 @@ class EventProcessor:
         is_new = False
         old_mejor_txt = None
         old_render_sig = None
+        local_update_dt = datetime.now()
         
         if not row:
             row = UIRow(
@@ -160,13 +160,19 @@ class EventProcessor:
         # - cambios en campos mostrados (usuario/calculados), aunque no cambie la oferta
         new_render_sig = self._row_render_signature(row)
         data_changed = (old_render_sig is not None and old_render_sig != new_render_sig)
-        should_render = is_new or bool(payload.get("changed", False)) or data_changed
+        should_render = is_new or bool(payload.get("changed")) or data_changed
         
         if should_render:
             # Log inteligente de cambios
-            if not is_new and old_mejor_txt and old_mejor_txt != row.mejor_oferta_txt:
-                # La mejor oferta cambió - loguear y disparar LED
-                self.log(f"📊 {row.desc}: Oferta {old_mejor_txt} → {row.mejor_oferta_txt}")
+            if not is_new and old_mejor_txt != row.mejor_oferta_txt and row.mejor_oferta_txt:
+                # Log detallado del cambio con timestamp Playwright y local.
+                pw_ts = str(payload.get("hora_ultima_oferta") or "").strip()
+                local_ts = local_update_dt.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+                delta_txt = self._compute_offer_delta_txt(playwright_time=pw_ts, local_dt=local_update_dt)
+                self.log(
+                    f"📊 [{rid}] {row.desc}: {old_mejor_txt} → {row.mejor_oferta_txt} | "
+                    f"playwright={pw_ts or '-'} | local={local_ts} | delta={delta_txt}"
+                )
                 # Disparar LED de cambios de oferta (será implementado en app.py)
                 try:
                     if hasattr(self, 'on_offer_changed'):
@@ -280,3 +286,30 @@ class EventProcessor:
                 pass
         
         return style
+
+    @staticmethod
+    def _compute_offer_delta_txt(*, playwright_time: str, local_dt: datetime) -> str:
+        """
+        Calcula delta aproximado entre hora de Playwright (HH:MM[:SS]) y hora local.
+        Si no se puede parsear, devuelve '-'.
+        """
+        if not playwright_time:
+            return "-"
+        # Intentar parseo directo ISO/fecha completa primero.
+        try:
+            pw_dt_full = datetime.fromisoformat(playwright_time)
+            return f"{(local_dt - pw_dt_full).total_seconds():.3f}s"
+        except Exception:
+            pass
+        for fmt in ("%H:%M:%S", "%H:%M"):
+            try:
+                t = datetime.strptime(playwright_time, fmt).time()
+                pw_dt = datetime.combine(local_dt.date(), t)
+                delta = (local_dt - pw_dt).total_seconds()
+                if delta < -3600:
+                    pw_dt = pw_dt - timedelta(days=1)
+                    delta = (local_dt - pw_dt).total_seconds()
+                return f"{delta:.3f}s"
+            except Exception:
+                continue
+        return "-"

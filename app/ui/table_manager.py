@@ -8,6 +8,7 @@ Responsabilidad única: Crear, actualizar, renderizar la tabla sin tocar lógica
 from __future__ import annotations
 
 import tkinter as tk
+import time
 from tkinter import ttk
 from dataclasses import dataclass
 from typing import Optional
@@ -51,6 +52,7 @@ class TableConfig:
     """Configuración estática de tabla (nombres, anchos, estilos)."""
     
     columns: tuple[str, ...] = (
+        "led",
         # IDs y básicos (Playwright)
         "id_subasta", "item", "desc", "cantidad",
         # Metadata usuario
@@ -77,6 +79,7 @@ class TableConfig:
         # BEST PRACTICE: Headers en 2 líneas (con \n)
         if self.column_labels is None:
             object.__setattr__(self, 'column_labels', {
+                "led": "LED",
                 "id_subasta": "ID\nSUBASTA",
                 "item": "Item",
                 "desc": "Descripción",
@@ -105,6 +108,7 @@ class TableConfig:
         # Tooltips: nombres COMPLETOS
         if self.column_tooltips is None:
             object.__setattr__(self, 'column_tooltips', {
+                "led": "ACTIVIDAD RENGLON",
                 "id_subasta": "ID SUBASTA",
                 "item": "ITEM",
                 "desc": "DESCRIPCION",
@@ -132,6 +136,7 @@ class TableConfig:
         
         if self.column_widths is None:
             object.__setattr__(self, 'column_widths', {
+                "led": 42,
                 "id_subasta": 110,
                 "item": 90,
                 "desc": 260,
@@ -170,6 +175,7 @@ class TableManager:
     TOOLTIP_HEADING_WRAP_PX = 240
     TOOLTIP_HEADING_MAX_WIDTH_PX = 280
     TOOLTIP_MARGIN_PX = 12
+    TOOLTIP_POLL_MS = 120
 
     def __init__(self, tree: ttk.Treeview):
         self.tree = tree
@@ -184,6 +190,8 @@ class TableManager:
         self._current_tooltip = None
         self._tooltip_col = None
         self._tooltip_target: tuple[str, str] | None = None
+        self._tooltip_shown_at = 0.0
+        self._tooltip_poll_job = None
         self._sort_state: dict[str, bool] = {}
         self._detached: set[str] = set()
         # Para "renta_para_mejorar" queremos empezar con orden descendente
@@ -214,7 +222,9 @@ class TableManager:
         
         # Asociar tooltips con la tabla
         self._setup_column_tooltips()
+        self._start_tooltip_polling()
         self._setup_selection_behavior()
+        self._setup_sorting_bindings()
         
         # --- CONFIGURACIÓN DE COLORES ESTILO EXCEL ---
         self.tree.tag_configure(RowStyle.NORMAL.value, background="", foreground="")
@@ -231,6 +241,8 @@ class TableManager:
         """Configura event binding para mostrar tooltips de columnas dinámicamente."""
         self.tree.bind("<Motion>", self._on_tree_motion, add="+")
         self.tree.bind("<Leave>", self._on_tree_leave, add="+")
+        self.tree.bind("<MouseWheel>", lambda _e: self._hide_current_tooltip(), add="+")
+        self.tree.bind("<ButtonPress>", lambda _e: self._hide_current_tooltip(), add="+")
 
     def _compute_header_padding(self, *, zoom_level: float) -> tuple[int, int, int, int]:
         """Calcula padding vertical de header a partir de altura manual objetivo."""
@@ -271,6 +283,15 @@ class TableManager:
         """Permite deseleccionar con click en fila ya seleccionada o en área vacía."""
         self.tree.bind("<Button-1>", self._on_left_click_toggle_selection, add="+")
         self.tree.bind("<Escape>", lambda _e: self.clear_selection(), add="+")
+
+    def _setup_sorting_bindings(self) -> None:
+        """Bindings para sorting en columnas clave."""
+        self.tree.heading("item", command=lambda: self._sort_by_column("item", numeric=True))
+        self.tree.heading("desc", command=lambda: self._sort_by_column("desc", numeric=False))
+        self.tree.heading(
+            "renta_para_mejorar",
+            command=lambda: self._sort_by_column("renta_para_mejorar", numeric=True),
+        )
 
     def _on_left_click_toggle_selection(self, event):
         region = self.tree.identify_region(event.x, event.y)
@@ -340,6 +361,27 @@ class TableManager:
             col=col,
         )
 
+    def _show_heading_tooltip_at(self, x: int, y: int) -> None:
+        col = self._resolve_column_key(self.tree.identify_column(x))
+        if not col:
+            self._hide_current_tooltip()
+            return
+        target = ("heading", col)
+        if self._current_tooltip and self._tooltip_target == target:
+            return
+        text = self.config.column_tooltips.get(col, col)
+        x_root = self.tree.winfo_rootx() + x + 12
+        y_root = self.tree.winfo_rooty() + self.ROW_HEIGHT + 8
+        self._show_tooltip(
+            text=text,
+            x=x_root,
+            y=y_root,
+            wraplength=self.TOOLTIP_HEADING_WRAP_PX,
+            max_width=self.TOOLTIP_HEADING_MAX_WIDTH_PX,
+            target=target,
+            col=col,
+        )
+
     def _show_cell_tooltip(self, event) -> None:
         iid = self.tree.identify_row(event.y)
         col = self._resolve_column_key(self.tree.identify_column(event.x))
@@ -369,6 +411,35 @@ class TableManager:
             col=col,
         )
 
+    def _show_cell_tooltip_at(self, x: int, y: int) -> None:
+        iid = self.tree.identify_row(y)
+        col = self._resolve_column_key(self.tree.identify_column(x))
+        if not iid or not col:
+            self._hide_current_tooltip()
+            return
+
+        raw = self.tree.set(iid, col)
+        text = str(raw or "").strip()
+        if not text:
+            self._hide_current_tooltip()
+            return
+
+        target = (iid, col)
+        if self._current_tooltip and self._tooltip_target == target:
+            return
+
+        x_root = self.tree.winfo_rootx() + x + 14
+        y_root = self.tree.winfo_rooty() + y + 18
+        self._show_tooltip(
+            text=text,
+            x=x_root,
+            y=y_root,
+            wraplength=self.TOOLTIP_CELL_WRAP_PX,
+            max_width=self.TOOLTIP_CELL_MAX_WIDTH_PX,
+            target=target,
+            col=col,
+        )
+
     def _show_tooltip(
         self,
         *,
@@ -392,6 +463,7 @@ class TableManager:
             pass
         self._current_tooltip.wm_geometry(f"+{x}+{y}")
         self._current_tooltip.lift()
+        self._tooltip_shown_at = time.monotonic()
 
         label = tk.Label(
             self._current_tooltip,
@@ -415,19 +487,44 @@ class TableManager:
             label.configure(wraplength=max(80, max_width - 16))
             self._current_tooltip.update_idletasks()
 
-        # Evitar que el tooltip se salga de la pantalla.
+        # En multi-monitor, winfo_screenwidth/height puede referir al monitor primario.
+        # Clamp contra la ventana toplevel actual para que el tooltip quede en el mismo monitor.
         tip_w = self._current_tooltip.winfo_reqwidth()
         tip_h = self._current_tooltip.winfo_reqheight()
-        screen_w = self.tree.winfo_screenwidth()
-        screen_h = self.tree.winfo_screenheight()
         margin = self.TOOLTIP_MARGIN_PX
 
-        pos_x = min(max(margin, x), max(margin, screen_w - tip_w - margin))
-        pos_y = min(max(margin, y), max(margin, screen_h - tip_h - margin))
+        root = self.tree.winfo_toplevel()
+        root_x = root.winfo_rootx()
+        root_y = root.winfo_rooty()
+        root_w = root.winfo_width()
+        root_h = root.winfo_height()
+
+        min_x = root_x + margin
+        max_x = max(min_x, root_x + root_w - tip_w - margin)
+        min_y = root_y + margin
+        max_y = max(min_y, root_y + root_h - tip_h - margin)
+
+        pos_x = min(max(min_x, x), max_x)
+        pos_y = min(max(min_y, y), max_y)
         self._current_tooltip.wm_geometry(f"+{pos_x}+{pos_y}")
     
     def _on_tree_leave(self, event):
         """Oculta tooltip cuando el mouse sale de la tabla."""
+        # Evitar cierre inmediato por eventos Leave espurios al crear tooltip.
+        if (time.monotonic() - self._tooltip_shown_at) < 0.15:
+            return
+        if self._current_tooltip:
+            try:
+                x_root = int(getattr(event, "x_root", -1))
+                y_root = int(getattr(event, "y_root", -1))
+                tx = self._current_tooltip.winfo_rootx()
+                ty = self._current_tooltip.winfo_rooty()
+                tw = self._current_tooltip.winfo_width()
+                th = self._current_tooltip.winfo_height()
+                if tx <= x_root <= (tx + tw) and ty <= y_root <= (ty + th):
+                    return
+            except Exception:
+                pass
         self._hide_current_tooltip()
     
     def _hide_current_tooltip(self):
@@ -440,14 +537,47 @@ class TableManager:
             self._current_tooltip = None
             self._tooltip_col = None
             self._tooltip_target = None
-        
-        # Bindings para sorting en columnas clave (se refrescan para asegurar binding)
-        self.tree.heading("item", command=lambda: self._sort_by_column("item", numeric=True))
-        self.tree.heading("desc", command=lambda: self._sort_by_column("desc", numeric=False))
-        self.tree.heading(
-            "renta_para_mejorar",
-            command=lambda: self._sort_by_column("renta_para_mejorar", numeric=True),
-        )
+
+    def _is_descendant(self, widget, ancestor) -> bool:
+        current = widget
+        while current is not None:
+            if current == ancestor:
+                return True
+            current = getattr(current, "master", None)
+        return False
+
+    def _start_tooltip_polling(self) -> None:
+        if self._tooltip_poll_job is not None:
+            return
+        self._tooltip_poll_job = self.tree.after(self.TOOLTIP_POLL_MS, self._poll_tooltip)
+
+    def _poll_tooltip(self) -> None:
+        self._tooltip_poll_job = None
+        try:
+            x_root = self.tree.winfo_pointerx()
+            y_root = self.tree.winfo_pointery()
+            widget_under = self.tree.winfo_containing(x_root, y_root)
+
+            # Si el puntero no esta sobre la tabla ni el tooltip, ocultar.
+            if not self._is_descendant(widget_under, self.tree):
+                if self._current_tooltip and self._is_descendant(widget_under, self._current_tooltip):
+                    pass
+                else:
+                    self._hide_current_tooltip()
+            else:
+                x = x_root - self.tree.winfo_rootx()
+                y = y_root - self.tree.winfo_rooty()
+                region = self.tree.identify_region(x, y)
+                if region == "heading":
+                    self._show_heading_tooltip_at(x, y)
+                elif region in ("cell", "tree"):
+                    self._show_cell_tooltip_at(x, y)
+                else:
+                    self._hide_current_tooltip()
+        except Exception:
+            pass
+        finally:
+            self._tooltip_poll_job = self.tree.after(self.TOOLTIP_POLL_MS, self._poll_tooltip)
     
     def clear(self) -> None:
         """Limpia toda la tabla."""
@@ -474,10 +604,11 @@ class TableManager:
     def insert_row(self, id_renglon: str, desc: str) -> str:
         """Inserta fila nueva en tabla."""
         initial_values = (
+            "",  # led
             "",  # id_subasta
             id_renglon,
             desc,
-        ) + ("",) * (len(self.config.columns) - 3)
+        ) + ("",) * (len(self.config.columns) - 4)
         
         iid = self.tree.insert(
             "",
@@ -509,9 +640,13 @@ class TableManager:
             return None
         iid = sel[0]
         values = self.tree.item(iid, "values")
-        if len(values) < 2:
+        try:
+            item_idx = self.config.columns.index("item")
+        except ValueError:
+            item_idx = 1
+        if len(values) <= item_idx:
             return None
-        return values[1]
+        return values[item_idx]
     
     def get_config(self) -> TableConfig:
         """Retorna configuración estática de tabla."""

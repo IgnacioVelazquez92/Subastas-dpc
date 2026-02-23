@@ -46,6 +46,8 @@ class ColumnManager:
         if cols:
             valid = [c for c in cols if c in self.config.columns]
             if valid:
+                if "led" in self.config.columns and "led" not in valid:
+                    valid = ["led"] + valid
                 self.tree.configure(displaycolumns=tuple(valid))
                 return
         

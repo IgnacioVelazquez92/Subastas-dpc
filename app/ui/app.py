@@ -73,6 +73,9 @@ class App(ctk.CTk):
         self.filter_search_text = tk.StringVar(value="")
         self.filter_search_text.trace_add("write", lambda *_: self._on_filter_changed())
         self.intensive_monitoring = tk.BooleanVar(value=True)
+        self._led_round_index = 0
+        self._led_active_rid: Optional[str] = None
+        self._led_all_on = False
 
         self._build_ui()
 
@@ -84,6 +87,7 @@ class App(ctk.CTk):
         
         # Poll de eventos desde engine
         self.after(100, self._poll_events)
+        self.after(1000, self._tick_led_heartbeat)
 
     # -------------------------
     # UI Building
@@ -272,7 +276,7 @@ class App(ctk.CTk):
 
         # Cargar columnas guardadas (REFACTORED: usar nombres nuevos)
         default_cols = [
-            "id_subasta", "item", "desc", "unidad_medida", "cantidad", "marca",
+            "led", "id_subasta", "item", "desc", "unidad_medida", "cantidad", "marca",
             "obs_usuario", "conv_usd", "costo_unit_usd", "costo_total_usd",
             "costo_unit_ars", "costo_total_ars", "renta_minima",
             "precio_unit_aceptable", "precio_total_aceptable",
@@ -360,15 +364,71 @@ class App(ctk.CTk):
         if self.lbl_status:
             self.lbl_status.configure(text=text)
 
+    def _render_row_preserving_style(self, row: UIRow) -> None:
+        if not self.table_mgr:
+            return
+        iid = self.table_mgr.iids.get(row.id_renglon)
+        if not iid:
+            return
+        tags = self.tree.item(iid, "tags")
+        style = tags[0] if tags else RowStyle.NORMAL.value
+        row_values = DisplayValues.build_row_values(row)
+        self.table_mgr.render_row(row.id_renglon, row_values, style)
+
+    def _set_row_led(self, row: UIRow, is_on: bool) -> None:
+        new_value = "●" if is_on else "○"
+        if row.update_led == new_value:
+            return
+        row.update_led = new_value
+        self._render_row_preserving_style(row)
+
+    def _clear_all_leds(self) -> None:
+        for row in self.rows.values():
+            self._set_row_led(row, False)
+        self._led_active_rid = None
+
+    def _tick_led_heartbeat(self) -> None:
+        rows = list(self.rows.values())
+        if not rows:
+            self._led_active_rid = None
+            self.after(1000, self._tick_led_heartbeat)
+            return
+
+        if bool(self.intensive_monitoring.get()):
+            # Modo intensivo: todos ON/OFF cada segundo.
+            self._led_all_on = not self._led_all_on
+            for row in rows:
+                self._set_row_led(row, self._led_all_on)
+        else:
+            # Modo sueno: un solo renglon encendido por segundo, rotando.
+            self._led_all_on = False
+
+            if self._led_active_rid and self._led_active_rid in self.rows:
+                self._set_row_led(self.rows[self._led_active_rid], False)
+
+            if self._led_round_index >= len(rows):
+                self._led_round_index = 0
+
+            row = rows[self._led_round_index]
+            self._set_row_led(row, True)
+            self._led_active_rid = row.id_renglon
+            self._led_round_index += 1
+
+        self.after(1000, self._tick_led_heartbeat)
+
     # -------------------------
     # Event Loop
     # -------------------------
     def _poll_events(self):
         """Obtiene eventos de engine y los procesa."""
         had_updates = False
+        processed = 0
+        max_events_per_tick = 200
+        has_pending = False
         try:
-            while True:
+            while processed < max_events_per_tick:
                 ev: Event = self.engine_out_q.get_nowait()
+                processed += 1
                 if ev.type in (EventType.SNAPSHOT, EventType.UPDATE):
                     had_updates = True
                 self.event_processor.process_event(ev)
@@ -378,7 +438,8 @@ class App(ctk.CTk):
         if had_updates:
             self._apply_filters()
 
-        self.after(100, self._poll_events)
+        has_pending = processed >= max_events_per_tick
+        self.after(20 if has_pending else 100, self._poll_events)
 
     def _on_filter_changed(self) -> None:
         """Callback de UI para aplicar filtros en la tabla."""
@@ -453,6 +514,9 @@ class App(ctk.CTk):
         """Activa/desactiva monitoreo intensivo en caliente."""
         enabled = bool(self.intensive_monitoring.get())
         self.handles.runtime.set_intensive_monitoring(enabled=enabled)
+        self._led_round_index = 0
+        self._led_all_on = False
+        self._clear_all_leds()
         if self.logger:
             mode_txt = "INTENSIVA" if enabled else "SUEÑO"
             self.logger.log(f"Modo de supervisión: {mode_txt}")

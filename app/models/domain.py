@@ -145,6 +145,7 @@ class UIRow:
     desc: str
     
     # IDs de referencia
+    update_led: str = ""
     id_subasta: Optional[str] = None
     subasta_id: Optional[str] = None
     renglon_pk: Optional[int] = None

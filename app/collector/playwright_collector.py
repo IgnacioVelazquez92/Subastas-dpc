@@ -82,6 +82,14 @@ class PlaywrightCollector(BaseCollector):
         self.poll_seconds = max(0.2, float(poll_seconds))
         self.intensive_mode = True
         self.relaxed_poll_seconds = max(10.0, self.poll_seconds * 10.0)
+        # Tuning de latencia (INTENSIVA):
+        # Para hasta 50 renglones, usamos una sola tanda grande.
+        # peor caso aprox = ceil(renglones/batch_size) * timeout.
+        # Con 50 renglones, batch=50 y timeout=4000ms => ~4.0s.
+        self.intensive_batch_size = 50
+        self.relaxed_batch_size = 10
+        self.intensive_request_timeout_ms = 4000
+        self.relaxed_request_timeout_ms = 5000
 
         self._thread: Thread | None = None
         self._stop_flag = False
@@ -604,7 +612,7 @@ class PlaywrightCollector(BaseCollector):
         batch_size = max(1, int(size))
         return [items[i:i + batch_size] for i in range(0, len(items), batch_size)]
 
-    async def _fetch_buscar_ofertas_batch(self, page, payloads: list[dict]) -> list[dict]:
+    async def _fetch_buscar_ofertas_batch(self, page, payloads: list[dict], *, timeout_ms: int = 3000) -> list[dict]:
         """
         Ejecuta múltiples fetch en paralelo dentro de la página.
         Devuelve una lista alineada con payloads:
@@ -613,9 +621,12 @@ class PlaywrightCollector(BaseCollector):
         if not payloads:
             return []
         return await page.evaluate(
-            """async (batch) => {
+            """async ({ batch, timeoutMs }) => {
                 const endpoint = "SubastaVivoAccesoPublico.aspx/BuscarOfertas";
+                const safeTimeout = Math.max(500, Number(timeoutMs || 3000));
                 const tasks = batch.map(async (p) => {
+                    const controller = new AbortController();
+                    const timer = setTimeout(() => controller.abort("timeout"), safeTimeout);
                     try {
                         const r = await fetch(endpoint, {
                             method: "POST",
@@ -623,18 +634,23 @@ class PlaywrightCollector(BaseCollector):
                                 "Content-Type": "application/json; charset=UTF-8",
                                 "X-Requested-With": "XMLHttpRequest"
                             },
-                            body: JSON.stringify(p)
+                            body: JSON.stringify(p),
+                            signal: controller.signal,
                         });
                         let j = null;
                         try { j = await r.json(); } catch (_e) { j = null; }
                         return { status: r.status, json: j };
                     } catch (e) {
-                        return { status: 0, json: null, error: String(e || "fetch_error") };
+                        const msg = String(e || "fetch_error");
+                        const timedOut = msg.toLowerCase().includes("abort") || msg.toLowerCase().includes("timeout");
+                        return { status: 0, json: null, error: timedOut ? "timeout" : msg };
+                    } finally {
+                        clearTimeout(timer);
                     }
                 });
                 return await Promise.all(tasks);
             }""",
-            payloads,
+            {"batch": payloads, "timeoutMs": int(timeout_ms)},
         )
 
     async def _monitor_loop(self, page, poll_seconds: float) -> None:
@@ -658,10 +674,6 @@ class PlaywrightCollector(BaseCollector):
 
         last_sig: dict[str, str] = {}
         tick = 0
-        # Para lotes grandes (ej. 60 renglones) evitamos rondas secuenciales.
-        # Se consulta en paralelo dentro del navegador en tandas grandes.
-        batch_size = max(10, min(80, len(renglones)))
-
         self.emit(info(EventType.HEARTBEAT, f"Monitoreo activo: id_cot={id_cot} poll_base={self.poll_seconds:.2f}s"))
 
         while not self._stop_flag:
@@ -681,6 +693,13 @@ class PlaywrightCollector(BaseCollector):
 
             total_batches = 0
             total_updates = 0
+            if self.intensive_mode:
+                batch_size = max(1, min(self.intensive_batch_size, len(renglones)))
+                request_timeout_ms = int(self.intensive_request_timeout_ms)
+            else:
+                batch_size = max(1, min(self.relaxed_batch_size, len(renglones)))
+                request_timeout_ms = int(self.relaxed_request_timeout_ms)
+
             for chunk in self._chunked(renglones, batch_size):
                 if self._stop_flag:
                     break
@@ -696,7 +715,11 @@ class PlaywrightCollector(BaseCollector):
                 ]
 
                 try:
-                    results = await self._fetch_buscar_ofertas_batch(page, payloads)
+                    results = await self._fetch_buscar_ofertas_batch(
+                        page,
+                        payloads,
+                        timeout_ms=request_timeout_ms,
+                    )
                 except Exception as e:
                     msg = str(e).lower()
                     if "closed" in msg or "target page" in msg or "target closed" in msg:
@@ -797,7 +820,7 @@ class PlaywrightCollector(BaseCollector):
                         f"updates={total_updates} batches={total_batches} "
                         f"intervalo_real_por_renglon={cycle_total:.2f}s "
                         f"(modo={'INTENSIVA' if self.intensive_mode else 'SUEÑO'} "
-                        f"poll_efectivo={effective_poll:.2f}s)"
+                        f"poll_efectivo={effective_poll:.2f}s batch={batch_size} timeout={request_timeout_ms}ms)"
                     ),
                 )
             )
