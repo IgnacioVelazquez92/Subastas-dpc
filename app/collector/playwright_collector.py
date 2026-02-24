@@ -81,7 +81,8 @@ class PlaywrightCollector(BaseCollector):
         self.headless = bool(headless)
         self.poll_seconds = max(0.2, float(poll_seconds))
         self.intensive_mode = True
-        self.relaxed_poll_seconds = max(10.0, self.poll_seconds * 10.0)
+        # Modo sueño: una consulta rotativa por renglón.
+        self.relaxed_poll_seconds = max(1.0, self.poll_seconds)
         # Tuning de latencia (INTENSIVA):
         # Para hasta 50 renglones, usamos una sola tanda grande.
         # peor caso aprox = ceil(renglones/batch_size) * timeout.
@@ -238,6 +239,7 @@ class PlaywrightCollector(BaseCollector):
                 if name == "set_poll":
                     poll_seconds = max(0.2, float(cmd.get("seconds", poll_seconds)))
                     self.poll_seconds = poll_seconds
+                    self.relaxed_poll_seconds = max(1.0, self.poll_seconds)
                     effective = self.poll_seconds if self.intensive_mode else self.relaxed_poll_seconds
                     mode_txt = "INTENSIVA" if self.intensive_mode else "SUEÑO"
                     self.emit(info(EventType.HEARTBEAT, f"poll_seconds actualizado: base={poll_seconds:.2f}s modo={mode_txt} efectivo={effective:.2f}s"))
@@ -674,6 +676,7 @@ class PlaywrightCollector(BaseCollector):
 
         last_sig: dict[str, str] = {}
         tick = 0
+        sleep_cursor = 0
         self.emit(info(EventType.HEARTBEAT, f"Monitoreo activo: id_cot={id_cot} poll_base={self.poll_seconds:.2f}s"))
 
         while not self._stop_flag:
@@ -694,13 +697,18 @@ class PlaywrightCollector(BaseCollector):
             total_batches = 0
             total_updates = 0
             if self.intensive_mode:
-                batch_size = max(1, min(self.intensive_batch_size, len(renglones)))
+                cycle_renglones = list(renglones)
+                batch_size = max(1, min(self.intensive_batch_size, len(cycle_renglones)))
                 request_timeout_ms = int(self.intensive_request_timeout_ms)
             else:
-                batch_size = max(1, min(self.relaxed_batch_size, len(renglones)))
+                # Modo sueño: solo un renglón por ciclo (rotativo).
+                idx = sleep_cursor % len(renglones)
+                sleep_cursor += 1
+                cycle_renglones = [renglones[idx]]
+                batch_size = 1
                 request_timeout_ms = int(self.relaxed_request_timeout_ms)
 
-            for chunk in self._chunked(renglones, batch_size):
+            for chunk in self._chunked(cycle_renglones, batch_size):
                 if self._stop_flag:
                     break
                 total_batches += 1
@@ -736,11 +744,20 @@ class PlaywrightCollector(BaseCollector):
 
                     if status != 200:
                         if status == 0:
+                            err_kind = str((res or {}).get("error") or "").lower()
+                            is_timeout = err_kind == "timeout"
                             self.emit(
-                                error(
-                                    EventType.EXCEPTION,
-                                    f"Fetch BuscarOfertas falló (renglon={rid}): {(res or {}).get('error', 'error desconocido')}",
-                                    payload={"id_renglon": rid},
+                                warn(
+                                    EventType.HTTP_ERROR,
+                                    f"BuscarOfertas HTTP=0 (renglon={rid}): {(res or {}).get('error', 'error desconocido')}",
+                                    payload={
+                                        "id_cot": id_cot,
+                                        "id_renglon": rid,
+                                        "desc": desc,
+                                        "http_status": 0,
+                                        "error_kind": "timeout" if is_timeout else "network",
+                                        "error_message": (res or {}).get("error", "error desconocido"),
+                                    },
                                 )
                             )
                         else:
@@ -748,7 +765,13 @@ class PlaywrightCollector(BaseCollector):
                                 warn(
                                     EventType.HTTP_ERROR,
                                     f"BuscarOfertas HTTP={status} (renglon={rid})",
-                                    payload={"id_cot": id_cot, "id_renglon": rid, "desc": desc, "http_status": status},
+                                    payload={
+                                        "id_cot": id_cot,
+                                        "id_renglon": rid,
+                                        "desc": desc,
+                                        "http_status": status,
+                                        "error_kind": "http_error",
+                                    },
                                 )
                             )
                         continue

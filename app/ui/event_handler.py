@@ -8,12 +8,10 @@ Responsabilidad única: Convertir eventos del motor en cambios de estado de tabl
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from typing import Optional
-
 from app.core.events import Event, EventType
 from app.core.alert_engine import RowStyle, SoundCue
 from app.ui.table_manager import TableManager
-from app.ui.formatters import DisplayValues, DataFormatter
+from app.ui.formatters import DisplayValues
 from app.models.domain import UIRow
 from app.utils.audio import play_outbid_alert
 
@@ -46,6 +44,7 @@ class EventProcessor:
         # Callbacks para LEDs (se asignan después en app.py)
         self.on_offer_changed = None  # Callback para LED de ofertas
         self.on_http_event = None  # Callback para LED HTTP (status_code)
+        self.on_row_http_event = None  # Callback para LED por renglón
     
     def process_event(self, ev: Event) -> None:
         """Procesa un evento del motor."""
@@ -83,15 +82,23 @@ class EventProcessor:
             except Exception:
                 pass
             self._handle_update(ev)
+            try:
+                payload = ev.payload or {}
+                rid = payload.get("id_renglon")
+                status = payload.get("http_status", 200)
+                if callable(self.on_row_http_event) and rid is not None:
+                    self.on_row_http_event(str(rid), int(status), "ok")
+            except Exception:
+                pass
             return
         
         if ev.type == EventType.HTTP_ERROR:
             payload = ev.payload or {}
-            status = (
-                payload.get("http_status")
-                or payload.get("status_code")
-                or payload.get("status")
-            )
+            status = payload.get("http_status")
+            if status is None:
+                status = payload.get("status_code")
+            if status is None:
+                status = payload.get("status")
             self.log(f"🔴 Error HTTP {status}: {ev.message}")
             # Disparar LED de HTTP con código de error
             try:
@@ -99,6 +106,27 @@ class EventProcessor:
                     self.on_http_event(int(status) if status is not None else 0)
             except Exception:
                 pass
+            try:
+                rid = payload.get("id_renglon")
+                if callable(self.on_row_http_event) and rid is not None:
+                    self.on_row_http_event(
+                        str(rid),
+                        int(status) if status is not None else 0,
+                        str(payload.get("error_kind") or ""),
+                    )
+            except Exception:
+                pass
+            return
+
+        if ev.type == EventType.EXCEPTION:
+            payload = ev.payload or {}
+            rid = payload.get("id_renglon")
+            msg = str(ev.message or "").lower()
+            if callable(self.on_row_http_event) and rid is not None and "timeout" in msg:
+                try:
+                    self.on_row_http_event(str(rid), 0, "timeout")
+                except Exception:
+                    pass
             return
 
         if ev.type == EventType.HEARTBEAT:

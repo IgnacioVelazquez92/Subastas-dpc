@@ -75,9 +75,14 @@ class App(ctk.CTk):
         self.filter_search_text = tk.StringVar(value="")
         self.filter_search_text.trace_add("write", lambda *_: self._on_filter_changed())
         self.intensive_monitoring = tk.BooleanVar(value=True)
-        self._led_round_index = 0
-        self._led_active_rid: Optional[str] = None
-        self._led_all_on = False
+        self._row_led_timers: dict[str, str] = {}
+        # Treeview no siempre renderiza bien emojis de color; usar glifos robustos.
+        self._row_led_default = "○"
+        self._row_led_pulse = "◉"
+        self._row_led_ok = "●"
+        self._row_led_warn = "◐"
+        self._row_led_error = "✖"
+        self.lbl_monitor_mode_hint: Optional[ctk.CTkLabel] = None
 
         self._build_ui()
 
@@ -89,7 +94,6 @@ class App(ctk.CTk):
         
         # Poll de eventos desde engine
         self.after(100, self._poll_events)
-        self.after(1000, self._tick_led_heartbeat)
 
     # -------------------------
     # UI Building
@@ -164,6 +168,14 @@ class App(ctk.CTk):
             variable=self.intensive_monitoring,
             command=self._on_toggle_intensive_monitoring,
         ).pack(side="left", padx=8)
+
+        self.lbl_monitor_mode_hint = ctk.CTkLabel(
+            control_frame,
+            text="Cadencia LED: -",
+            font=ctk.CTkFont(size=10),
+            text_color="#666666",
+        )
+        self.lbl_monitor_mode_hint.pack(side="left", padx=8)
 
         # LEDs de estado
         leds_frame = ctk.CTkFrame(top, fg_color="transparent")
@@ -340,6 +352,7 @@ class App(ctk.CTk):
         # Registrar callbacks para LEDs
         self.event_processor.on_offer_changed = self.offer_led.on_offer_changed
         self.event_processor.on_http_event = self.http_led.on_http_status
+        self.event_processor.on_row_http_event = self._on_row_http_event
 
         # Cargar columnas guardadas (REFACTORED: usar nombres nuevos)
         default_cols = [
@@ -353,6 +366,7 @@ class App(ctk.CTk):
         ]
         self.col_mgr.load_visible_columns(default_cols)
         self._on_toggle_intensive_monitoring()
+        self._update_monitor_mode_hint()
 
         # Cargar mi_id_proveedor guardado
         self.after(200, self._load_mi_id_proveedor)
@@ -447,46 +461,73 @@ class App(ctk.CTk):
         row_values = DisplayValues.build_row_values(row)
         self.table_mgr.render_row(row.id_renglon, row_values, style)
 
-    def _set_row_led(self, row: UIRow, is_on: bool) -> None:
-        new_value = "●" if is_on else "○"
+    def _set_row_led_symbol(self, row: UIRow, symbol: str) -> None:
+        new_value = symbol
         if row.update_led == new_value:
             return
         row.update_led = new_value
         self._render_row_preserving_style(row)
 
-    def _clear_all_leds(self) -> None:
-        for row in self.rows.values():
-            self._set_row_led(row, False)
-        self._led_active_rid = None
+    def _cancel_row_led_timer(self, rid: str) -> None:
+        timer_id = self._row_led_timers.pop(rid, None)
+        if timer_id:
+            try:
+                self.after_cancel(timer_id)
+            except Exception:
+                pass
 
-    def _tick_led_heartbeat(self) -> None:
-        rows = list(self.rows.values())
-        if not rows:
-            self._led_active_rid = None
-            self.after(1000, self._tick_led_heartbeat)
+    def _schedule_row_led_settle(self, rid: str, symbol: str, delay_ms: int = 180) -> None:
+        self._cancel_row_led_timer(rid)
+
+        def _settle():
+            self._row_led_timers.pop(rid, None)
+            row = self.rows.get(rid)
+            if row is None:
+                return
+            self._set_row_led_symbol(row, symbol)
+
+        self._row_led_timers[rid] = self.after(delay_ms, _settle)
+
+    def _clear_all_leds(self) -> None:
+        for rid in list(self._row_led_timers.keys()):
+            self._cancel_row_led_timer(rid)
+        for row in self.rows.values():
+            self._set_row_led_symbol(row, self._row_led_default)
+
+    def _on_row_http_event(self, rid: str, status_code: int, error_kind: str = "") -> None:
+        row = self.rows.get(str(rid))
+        if row is None:
             return
 
-        if bool(self.intensive_monitoring.get()):
-            # Modo intensivo: todos ON/OFF cada segundo.
-            self._led_all_on = not self._led_all_on
-            for row in rows:
-                self._set_row_led(row, self._led_all_on)
+        kind = str(error_kind or "").lower()
+        if int(status_code) == 200:
+            target_symbol = self._row_led_ok
+        elif int(status_code) == 0 or kind == "timeout":
+            target_symbol = self._row_led_warn
         else:
-            # Modo sueno: un solo renglon encendido por segundo, rotando.
-            self._led_all_on = False
+            target_symbol = self._row_led_error
 
-            if self._led_active_rid and self._led_active_rid in self.rows:
-                self._set_row_led(self.rows[self._led_active_rid], False)
+        self._set_row_led_symbol(row, self._row_led_pulse)
+        self._schedule_row_led_settle(row.id_renglon, target_symbol, delay_ms=320)
 
-            if self._led_round_index >= len(rows):
-                self._led_round_index = 0
+    def _update_monitor_mode_hint(self) -> None:
+        if not self.lbl_monitor_mode_hint:
+            return
+        total_rows = max(0, len(self.rows))
+        poll_base = max(1.0, float(getattr(self.handles.runtime, "poll_seconds", 1.0)))
+        intensive = bool(self.intensive_monitoring.get())
 
-            row = rows[self._led_round_index]
-            self._set_row_led(row, True)
-            self._led_active_rid = row.id_renglon
-            self._led_round_index += 1
-
-        self.after(1000, self._tick_led_heartbeat)
+        if total_rows == 0:
+            text = "Cadencia LED: sin renglones capturados"
+        elif intensive:
+            text = f"INTENSIVA: {total_rows} renglones/ciclo, cada ~{poll_base:.1f}s"
+        else:
+            if total_rows == 1:
+                text = f"SUEÑO: 1 renglón/ciclo, cada ~{poll_base:.1f}s (igual a intensiva)"
+            else:
+                per_row = poll_base * total_rows
+                text = f"SUEÑO: 1 renglón/ciclo (~{poll_base:.1f}s). Cada renglón ~{per_row:.1f}s"
+        self.lbl_monitor_mode_hint.configure(text=text)
 
     # -------------------------
     # Event Loop
@@ -509,6 +550,7 @@ class App(ctk.CTk):
 
         if had_updates:
             self._apply_filters()
+            self._update_monitor_mode_hint()
 
         has_pending = processed >= max_events_per_tick
         self.after(20 if has_pending else 100, self._poll_events)
@@ -642,9 +684,8 @@ class App(ctk.CTk):
         """Activa/desactiva monitoreo intensivo en caliente."""
         enabled = bool(self.intensive_monitoring.get())
         self.handles.runtime.set_intensive_monitoring(enabled=enabled)
-        self._led_round_index = 0
-        self._led_all_on = False
         self._clear_all_leds()
+        self._update_monitor_mode_hint()
         if self.logger:
             mode_txt = "INTENSIVA" if enabled else "SUEÑO"
             self.logger.log(f"Modo de supervisión: {mode_txt}")
