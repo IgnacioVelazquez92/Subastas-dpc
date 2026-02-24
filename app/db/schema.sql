@@ -21,7 +21,8 @@ CREATE TABLE IF NOT EXISTS subasta (
     ended_at        TEXT,                       -- se setea cuando finaliza
     last_ok_at      TEXT,                       -- último update válido
     last_http_code  INTEGER,                    -- último HTTP status observado
-    err_streak      INTEGER NOT NULL DEFAULT 0  -- errores consecutivos (seguridad)
+    err_streak      INTEGER NOT NULL DEFAULT 0, -- errores consecutivos (seguridad)
+    mi_id_proveedor TEXT                        -- ID de proveedor propio en esta subasta (anónimo/variable)
 );
 
 CREATE INDEX IF NOT EXISTS idx_subasta_estado ON subasta(estado);

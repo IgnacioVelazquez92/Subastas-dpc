@@ -70,6 +70,8 @@ class App(ctk.CTk):
         self.filter_with_cost = tk.BooleanVar(value=False)
         self.filter_tracked = tk.BooleanVar(value=False)
         self.filter_viable_only = tk.BooleanVar(value=False)
+        self.filter_my_offers = tk.BooleanVar(value=False)   # Solo renglones donde oferta_mia=True
+        self.filter_not_offered = tk.BooleanVar(value=False) # Solo renglones donde oferta_mia=False
         self.filter_search_text = tk.StringVar(value="")
         self.filter_search_text.trace_add("write", lambda *_: self._on_filter_changed())
         self.intensive_monitoring = tk.BooleanVar(value=True)
@@ -213,6 +215,20 @@ class App(ctk.CTk):
             command=self._on_filter_changed,
         ).pack(side="left", padx=6)
 
+        ctk.CTkSwitch(
+            filter_bar,
+            text="Solo mis ofertas",
+            variable=self.filter_my_offers,
+            command=self._on_filter_changed,
+        ).pack(side="left", padx=6)
+
+        ctk.CTkSwitch(
+            filter_bar,
+            text="Sin mis ofertas",
+            variable=self.filter_not_offered,
+            command=self._on_filter_changed,
+        ).pack(side="left", padx=6)
+
         ctk.CTkEntry(
             filter_bar,
             textvariable=self.filter_search_text,
@@ -226,6 +242,57 @@ class App(ctk.CTk):
             width=110,
             command=self._reset_filters,
         ).pack(side="right", padx=6)
+
+        # ── Panel: Mi ID Proveedor ──────────────────────────────────────────────
+        prov_bar = ctk.CTkFrame(self.main_content)
+        prov_bar.pack(fill="x", padx=10, pady=(0, 6))
+
+        ctk.CTkLabel(
+            prov_bar,
+            text="Mi ID Proveedor:",
+            font=ctk.CTkFont(size=11, weight="bold"),
+        ).pack(side="left", padx=(6, 4))
+
+        self._mi_id_prov_var = tk.StringVar(value="")
+        self._mi_id_prov_entry = ctk.CTkEntry(
+            prov_bar,
+            textvariable=self._mi_id_prov_var,
+            placeholder_text="Ej: 30707010  (variable por subasta)",
+            width=240,
+        )
+        self._mi_id_prov_entry.pack(side="left", padx=4)
+        self._mi_id_prov_entry.bind("<Return>", lambda _e: self._save_mi_id_proveedor())
+
+        ctk.CTkButton(
+            prov_bar,
+            text="Guardar",
+            width=80,
+            command=self._save_mi_id_proveedor,
+        ).pack(side="left", padx=4)
+
+        self._lbl_mi_prov_status = ctk.CTkLabel(
+            prov_bar,
+            text="",
+            font=ctk.CTkFont(size=10),
+            text_color="#888888",
+        )
+        self._lbl_mi_prov_status.pack(side="left", padx=8)
+
+        ctk.CTkLabel(
+            prov_bar,
+            text="ℹ️  Renglones con tu oferta: ",
+            font=ctk.CTkFont(size=10),
+            text_color="#5B9BD5",
+        ).pack(side="left", padx=(16, 0))
+
+        self._lbl_my_offer_count = ctk.CTkLabel(
+            prov_bar,
+            text="0",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color="#5B9BD5",
+        )
+        self._lbl_my_offer_count.pack(side="left")
+        # ───────────────────────────────────────────────────────────────────────
 
         # Panel central: tabla
         body = ctk.CTkFrame(self.main_content)
@@ -286,6 +353,11 @@ class App(ctk.CTk):
         ]
         self.col_mgr.load_visible_columns(default_cols)
         self._on_toggle_intensive_monitoring()
+
+        # Cargar mi_id_proveedor guardado
+        self.after(200, self._load_mi_id_proveedor)
+        # Actualizar contador periódico
+        self.after(3000, self._tick_my_offer_count)
 
     def _on_main_content_configure(self, _event=None) -> None:
         if hasattr(self, "main_canvas"):
@@ -450,6 +522,8 @@ class App(ctk.CTk):
         self.filter_with_cost.set(False)
         self.filter_tracked.set(False)
         self.filter_viable_only.set(False)
+        self.filter_my_offers.set(False)
+        self.filter_not_offered.set(False)
         self.filter_search_text.set("")
         self._apply_filters()
 
@@ -485,13 +559,18 @@ class App(ctk.CTk):
             
             # 🔥 Filtro "Solo en carrera": ocultar renglones fuera de umbral
             if self.filter_viable_only.get():
-                # renta_minima es fracción (ej: 0.15 = 15%, 0.30 = 30%)
-                # renta_para_mejorar es fracción (ej: 0.12 = 12%)
-                # Comparar: renta_para_mejorar >= renta_minima
                 if row.renta_minima is not None and row.renta_para_mejorar is not None:
                     if float(row.renta_para_mejorar) < float(row.renta_minima):
-                        return False  # Ocultar (no está en carrera)
-            
+                        return False
+
+            # 🔵 Filtro "Solo mis ofertas": mostrar solo renglones donde soy el mejor
+            if self.filter_my_offers.get() and not row.oferta_mia:
+                return False
+
+            # ⬜ Filtro "Sin mis ofertas": mostrar solo renglones donde NO soy el mejor
+            if self.filter_not_offered.get() and row.oferta_mia:
+                return False
+
             if search_term and search_term not in self._build_search_haystack(row):
                 return False
             return True
@@ -499,8 +578,57 @@ class App(ctk.CTk):
         self.table_mgr.apply_filter(self.rows, predicate)
 
     # -------------------------
-    # User Actions
+    # Mi ID Proveedor
     # -------------------------
+    def _load_mi_id_proveedor(self) -> None:
+        """Carga el mi_id_proveedor guardado desde la BD al iniciar."""
+        try:
+            value = self.handles.runtime.get_mi_id_proveedor()
+            if value:
+                self._mi_id_prov_var.set(value)
+                self._lbl_mi_prov_status.configure(
+                    text=f"Activo: {value}",
+                    text_color="#5B9BD5",
+                )
+        except Exception:
+            pass
+
+    def _save_mi_id_proveedor(self) -> None:
+        """Guarda el mi_id_proveedor ingresado y actualiza el engine."""
+        value = self._mi_id_prov_var.get().strip()
+        try:
+            self.handles.runtime.set_mi_id_proveedor(value if value else None)
+            if value:
+                self._lbl_mi_prov_status.configure(
+                    text=f"✓ Guardado: {value}",
+                    text_color="#5B9BD5",
+                )
+                if self.logger:
+                    self.logger.log(f"🔵 Mi ID Proveedor actualizado → {value}")
+            else:
+                self._lbl_mi_prov_status.configure(
+                    text="Borrado (sin ID activo)",
+                    text_color="#888888",
+                )
+                if self.logger:
+                    self.logger.log("🔵 Mi ID Proveedor eliminado.")
+        except Exception as e:
+            self._lbl_mi_prov_status.configure(
+                text=f"Error: {e}",
+                text_color="#FF4444",
+            )
+
+    def _tick_my_offer_count(self) -> None:
+        """Actualiza el contador de renglones donde tengo la mejor oferta."""
+        try:
+            count = sum(1 for row in self.rows.values() if row.oferta_mia)
+            if hasattr(self, "_lbl_my_offer_count"):
+                self._lbl_my_offer_count.configure(text=str(count))
+        except Exception:
+            pass
+        self.after(3000, self._tick_my_offer_count)
+
+
     def on_columns(self) -> None:
         """Abre diálogo de visibilidad de columnas."""
         self.col_mgr.show_dialog(self)

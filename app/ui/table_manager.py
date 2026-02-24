@@ -236,6 +236,10 @@ class TableManager:
         self.tree.tag_configure(RowStyle.WARNING.value, background="#FFEB9C", foreground="#9C6500")
         # Error (Rojo Excel)
         self.tree.tag_configure(RowStyle.DANGER.value, background="#FFC7CE", foreground="#9C0006")
+        # Oferta propia vigente (Azul institucional #5B9BD5 → fondo, texto blanco)
+        self.tree.tag_configure(RowStyle.MY_OFFER.value, background="#5B9BD5", foreground="#FFFFFF")
+        # Oferta propia superada (Naranja alerta)
+        self.tree.tag_configure(RowStyle.OUTBID.value, background="#FF8C00", foreground="#FFFFFF")
     
     def _setup_column_tooltips(self) -> None:
         """Configura event binding para mostrar tooltips de columnas dinámicamente."""

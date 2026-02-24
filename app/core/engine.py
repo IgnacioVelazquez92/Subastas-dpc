@@ -62,6 +62,11 @@ class Engine:
         self.subasta_id_by_id_cot: dict[str, int] = {}
         self.renglon_pk_by_keys: dict[tuple[int, str], int] = {}
 
+        # mi_id_proveedor por subasta (cargado bajo demanda)
+        self._mi_id_proveedor_cache: dict[int, str | None] = {}
+        # Estado previo de oferta_mia_auto por renglón PK (para detectar outbid)
+        self._prev_oferta_mia_auto: dict[int, bool] = {}
+
         # estado operativo para seguridad
         self.subasta_err_streak: dict[int, int] = {}
         self.subasta_last_ok_at: dict[int, Optional[str]] = {}
@@ -85,6 +90,11 @@ class Engine:
 
     def set_current_poll_seconds(self, seconds: float) -> None:
         self.current_poll_seconds = max(0.2, float(seconds))
+
+    def refresh_mi_id_proveedor(self, subasta_id: int) -> None:
+        """Invalida cache de mi_id_proveedor para que se recargue desde DB en el siguiente tick."""
+        self._mi_id_proveedor_cache.pop(subasta_id, None)
+
 
     def run_once(self, timeout: float = 0.05) -> None:
         try:
@@ -615,6 +625,34 @@ class Engine:
             if renta_minima is None:
                 utilidad_min_pct = float(cfg.get("utilidad_min_pct", utilidad_min_pct))
             ocultar_bajo_umbral = bool(cfg.get("ocultar_bajo_umbral", ocultar_bajo_umbral))
+
+        # ---------------------------------------------------------------
+        # AUTO-DETECCIÓN: mi_id_proveedor
+        # ---------------------------------------------------------------
+        mejor_id_proveedor = payload.get("mejor_id_proveedor")
+
+        # Cargar mi_id_proveedor desde cache (o DB si no está cacheado)
+        if subasta_id not in self._mi_id_proveedor_cache:
+            self._mi_id_proveedor_cache[subasta_id] = self.db.get_mi_id_proveedor(subasta_id=subasta_id)
+        mi_id_prov = self._mi_id_proveedor_cache.get(subasta_id)
+
+        # Determinar si la mejor oferta es nuestra
+        oferta_mia_auto = bool(
+            mejor_id_proveedor is not None
+            and mi_id_prov is not None
+            and str(mejor_id_proveedor).strip() == str(mi_id_prov).strip()
+        )
+
+        # Auto-merge: si detectamos automáticamente, también marcar oferta_mia
+        if oferta_mia_auto:
+            oferta_mia = True
+
+        # Detectar OUTBID: estábamos vigentes y ahora no (cambio real en mejor oferta)
+        prev_mia_auto = self._prev_oferta_mia_auto.get(renglon_pk, False)
+        outbid = bool(prev_mia_auto and not oferta_mia_auto and changed and mi_id_prov is not None)
+        self._prev_oferta_mia_auto[renglon_pk] = oferta_mia_auto
+        # ---------------------------------------------------------------
+
         
         # 🔥 CRÍTICO: Derivar utilidad_min_pct de renta_minima (PRIORIDAD sobre config)
         if renta_minima is not None:
@@ -661,16 +699,28 @@ class Engine:
 
         if should_log:
             print(f"\n[DECISION] AlertEngine.decide:")
-            print(f"  tracked={tracked}, oferta_mia={oferta_mia}")
+            print(f"  tracked={tracked}, oferta_mia={oferta_mia}, oferta_mia_auto={oferta_mia_auto}, outbid={outbid}")
             if utilidad_para_alerta is not None:
                 print(f"  utilidad_pct={utilidad_para_alerta:.2f}%, utilidad_min_pct={utilidad_min_pct:.2f}%")
             else:
                 print(f"  utilidad_pct=None (sin datos), utilidad_min_pct={utilidad_min_pct:.2f}%")
             print(f"  ocultar_bajo_umbral={ocultar_bajo_umbral}, changed={changed}")
-        
+
+        # Log de evento OUTBID (auditoría)
+        if outbid:
+            self.db.insert_evento(
+                nivel="WARN",
+                tipo="OUTBID",
+                mensaje=f"OUTBID: renglón {rid} — tu oferta fue superada (mejor_id={mejor_id_proveedor})",
+                subasta_id=subasta_id,
+                renglon_id=renglon_pk,
+            )
+
         decision: AlertDecision = self.alert_engine.decide(
             tracked=tracked,
             oferta_mia=oferta_mia,
+            oferta_mia_auto=oferta_mia_auto,
+            outbid=outbid,
             utilidad_pct=utilidad_para_alerta,
             utilidad_min_pct=utilidad_min_pct,
             ocultar_bajo_umbral=ocultar_bajo_umbral,
@@ -678,7 +728,7 @@ class Engine:
             http_status=http_status,
             mensaje=mensaje,
         )
-        
+
         if should_log:
             print(f"  RESULTADO: style={decision.style.value}, hide={decision.hide}, highlight={decision.highlight}")
             print(f"  mensaje='{decision.message}'")
@@ -756,6 +806,9 @@ class Engine:
                     "utilidad_pct": utilidad_pct,
                     "seguir": bool(seguir),
                     "oferta_mia": bool(oferta_mia),
+                    "oferta_mia_auto": bool(oferta_mia_auto),
+                    "outbid": bool(outbid),
+                    "mejor_id_proveedor": mejor_id_proveedor,
                     "utilidad_min_pct": utilidad_min_pct,
                     "ocultar_bajo_umbral": bool(ocultar_bajo_umbral),
                     "alert_style": decision.style.value,

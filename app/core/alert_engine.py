@@ -28,6 +28,8 @@ class RowStyle(str, Enum):
     WARNING = "WARNING"      # alerta amarilla
     DANGER = "DANGER"        # alerta roja
     SUCCESS = "SUCCESS"      # oferta mía / situación positiva
+    MY_OFFER = "MY_OFFER"    # oferta propia (detectada por mi_id_proveedor) → #5B9BD5
+    OUTBID = "OUTBID"        # oferta propia superada por otro → alerta naranja
 
 
 class SoundCue(str, Enum):
@@ -79,13 +81,17 @@ class AlertEngine:
         changed: bool,
         http_status: int = 200,
         mensaje: str = "",
+        outbid: bool = False,          # True cuando la oferta propia fue superada este tick
+        oferta_mia_auto: bool = False, # True cuando se detectó por mi_id_proveedor automáticamente
     ) -> AlertDecision:
         """
         Retorna la decisión de alertas/estilo para un renglón.
 
         Parámetros clave:
         - tracked: el renglón está en seguimiento (ej. costo cargado o seguir=1)
-        - oferta_mia: marca del usuario
+        - oferta_mia: marca de oferta propia (manual o auto-detectado)
+        - oferta_mia_auto: True si fue detectado automáticamente por mi_id_proveedor
+        - outbid: True si en este tick la oferta propia fue superada
         - utilidad_pct: utilidad calculada (None si no se puede calcular)
         - utilidad_min_pct: umbral configurado
         - ocultar_bajo_umbral: UX (ocultar si no cumple)
@@ -104,7 +110,6 @@ class AlertEngine:
             )
 
         # 2) Si la subasta está finalizada (por mensaje)
-        #    (esto se refina cuando tengamos el parser real)
         if "finalizada" in (mensaje or "").lower():
             return AlertDecision(
                 style=RowStyle.WARNING,
@@ -114,8 +119,27 @@ class AlertEngine:
                 message="Subasta finalizada",
             )
 
-        # 3) Oferta marcada como mía => prioridad visual (SUCCESS)
-        #    (pero igual podemos alertar si cambia algo)
+        # 3a) Oferta propia SUPERADA → alerta inmediata con sonido
+        if outbid:
+            return AlertDecision(
+                style=RowStyle.OUTBID,
+                play_sound=SoundCue.ALERT,
+                highlight=True,
+                hide=False,
+                message="⚠️ ¡Tu oferta fue superada!",
+            )
+
+        # 3b) Oferta propia vigente (auto-detectada por id_proveedor)
+        if oferta_mia and oferta_mia_auto:
+            return AlertDecision(
+                style=RowStyle.MY_OFFER,
+                play_sound=SoundCue.SUCCESS if (changed and tracked) else SoundCue.NONE,
+                highlight=bool(changed and tracked),
+                hide=False,
+                message="✅ Mejor oferta: es la tuya",
+            )
+
+        # 3c) Oferta marcada manualmente como mía => SUCCESS clásico
         if oferta_mia:
             return AlertDecision(
                 style=RowStyle.SUCCESS,
@@ -126,13 +150,11 @@ class AlertEngine:
             )
 
         # 4) Reglas por utilidad (si existe datos para comparar)
-        # REFACTORING: Color coding mejorado
         # - Verde: utilidad > (renta_minima + 5%)
         # - Amarillo: utilidad entre renta_minima y (renta_minima + 5%)
         # - Rojo: utilidad <= renta_minima
         if utilidad_pct is not None:
             if utilidad_pct >= utilidad_min_pct + 5.0:
-                # ÉXITO: buena utilidad (5% por encima del mínimo)
                 return AlertDecision(
                     style=RowStyle.SUCCESS,
                     play_sound=SoundCue.ALERT if (changed and tracked) else SoundCue.NONE,
@@ -141,7 +163,6 @@ class AlertEngine:
                     message=f"✓ Utilidad {utilidad_pct:.2f}% (excelente, +{utilidad_pct - utilidad_min_pct:.2f}%)",
                 )
             elif utilidad_pct >= utilidad_min_pct:
-                # ALERTA: cumple mínimo pero poco margen
                 return AlertDecision(
                     style=RowStyle.WARNING,
                     play_sound=SoundCue.NONE,
@@ -150,7 +171,6 @@ class AlertEngine:
                     message=f"⚠ Utilidad {utilidad_pct:.2f}% (justo, +{utilidad_pct - utilidad_min_pct:.2f}%)",
                 )
             else:
-                # ERROR: debajo de umbral mínimo
                 return AlertDecision(
                     style=RowStyle.DANGER,
                     play_sound=SoundCue.ERROR if tracked else SoundCue.NONE,
@@ -159,8 +179,7 @@ class AlertEngine:
                     message=f"✗ Utilidad {utilidad_pct:.2f}% (insuficiente, {utilidad_pct - utilidad_min_pct:.2f}%)",
                 )
 
-        # 5) Si no hay utilidad calculable, aplicar reglas por tracked/cambios
-        # (sin color de rentabilidad, pero mantener otros estados)
+        # 5) Sin utilidad calculable: reglas por tracked/cambios
         if tracked and changed:
             return AlertDecision(
                 style=RowStyle.WARNING,

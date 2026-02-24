@@ -23,6 +23,7 @@ class Subasta:
     """
     Una subasta monitoreada del portal.
     id_cot: id_Cotizacion (texto, como viene del portal)
+    mi_id_proveedor: ID de proveedor propio en esta subasta (varía por subasta para anonimato).
     """
     id: int
     id_cot: str
@@ -33,6 +34,7 @@ class Subasta:
     last_ok_at: Optional[str] = None
     last_http_code: Optional[int] = None
     err_streak: int = 0
+    mi_id_proveedor: Optional[str] = None  # ID proveedor propio para esta subasta
 
 
 @dataclass(frozen=True)
@@ -187,4 +189,6 @@ class UIRow:
     
     # Flags de estado
     seguir: bool = False
-    oferta_mia: bool = False
+    oferta_mia: bool = False          # manual (usuario) o auto-detectado
+    oferta_mia_auto: bool = False     # True = fue detectado automáticamente por mi_id_proveedor
+    mejor_id_proveedor: Optional[str] = None   # id_proveedor de la mejor oferta actual

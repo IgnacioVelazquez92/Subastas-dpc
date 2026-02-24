@@ -7,6 +7,7 @@ from pathlib import Path
 from app.db.database import Database
 from app.core.app_runtime import AppRuntime
 from app.ui.app import App
+from app.utils.audio import ensure_default_sound
 
 
 def bootstrap_db() -> Database:
@@ -59,6 +60,9 @@ def main():
             parser.error(f"❌ Escenario no encontrado: {scenario_path}")
 
     db = bootstrap_db()
+
+    # Asegurar que el sonido de alerta exista (genera WAV por defecto si falta)
+    ensure_default_sound()
 
     runtime = AppRuntime(
         db=db,

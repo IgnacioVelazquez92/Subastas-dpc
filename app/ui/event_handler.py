@@ -15,6 +15,7 @@ from app.core.alert_engine import RowStyle, SoundCue
 from app.ui.table_manager import TableManager
 from app.ui.formatters import DisplayValues, DataFormatter
 from app.models.domain import UIRow
+from app.utils.audio import play_outbid_alert
 
 
 class EventProcessor:
@@ -214,6 +215,8 @@ class EventProcessor:
             row.obs_cambio,
             row.seguir,
             row.oferta_mia,
+            getattr(row, "oferta_mia_auto", False),
+            getattr(row, "mejor_id_proveedor", None),
         )
     
     def _update_row_from_payload(self, row: UIRow, payload: dict, ev: Event) -> None:
@@ -266,6 +269,9 @@ class EventProcessor:
         # Flags
         row.seguir = bool(payload.get("seguir", row.seguir))
         row.oferta_mia = bool(payload.get("oferta_mia", row.oferta_mia))
+        row.oferta_mia_auto = bool(payload.get("oferta_mia_auto", row.oferta_mia_auto))
+        if "mejor_id_proveedor" in payload:
+            row.mejor_id_proveedor = payload.get("mejor_id_proveedor")
     
     def _apply_event_decorations(self, row: UIRow, payload: dict, ev: Event) -> str:
         """
@@ -277,14 +283,30 @@ class EventProcessor:
         style = payload.get("alert_style") or RowStyle.NORMAL.value
         sound = payload.get("sound") or SoundCue.NONE.value
         highlight = bool(payload.get("highlight", False))
-        
-        # Reproducir sonido si corresponde
+        outbid = bool(payload.get("outbid", False))
+
+        # OUTBID → sonido WAV de alerta + log específico
+        if outbid:
+            try:
+                play_outbid_alert()
+            except Exception:
+                try:
+                    self.bell()
+                except Exception:
+                    pass
+            self.log(
+                f"🔔 [{row.id_renglon}] ¡OFERTA SUPERADA! "
+                f"(nuevo proveedor: {payload.get('mejor_id_proveedor', '?')})"
+            )
+            return style
+
+        # Reproducir sonido genérico si corresponde
         if sound != SoundCue.NONE.value and highlight:
             try:
                 self.bell()
             except Exception:
                 pass
-        
+
         return style
 
     @staticmethod

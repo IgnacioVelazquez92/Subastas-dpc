@@ -325,7 +325,25 @@ class AppRuntime:
     def set_ui_config(self, *, key: str, value: str) -> None:
         self.db.set_ui_config(key=key, value=value)
 
-    def start_collector(self) -> None:
+    def get_mi_id_proveedor(self) -> str | None:
+        """Devuelve mi_id_proveedor de la subasta activa (o más reciente)."""
+        subasta_id = self.db.get_running_subasta_id() or self.db.get_latest_subasta_id()
+        if not subasta_id:
+            return None
+        return self.db.get_mi_id_proveedor(subasta_id=subasta_id)
+
+    def set_mi_id_proveedor(self, value: str | None) -> None:
+        """Guarda mi_id_proveedor en la subasta activa (o más reciente) e invalida cache del engine."""
+        subasta_id = self.db.get_running_subasta_id() or self.db.get_latest_subasta_id()
+        if not subasta_id:
+            return
+        self.db.set_mi_id_proveedor(
+            subasta_id=subasta_id,
+            mi_id_proveedor=value.strip() if value and value.strip() else None,
+        )
+        self.engine.refresh_mi_id_proveedor(subasta_id)
+
+
         try:
             if getattr(self.collector, "running", False):
                 # Si ya esta corriendo, en Playwright intentamos abrir listado.
@@ -335,6 +353,22 @@ class AppRuntime:
             self.collector.start()
         except Exception as e:
             self.engine_out_q.put(info(EventType.EXCEPTION, f"Collector no pudo iniciar: {e}"))
+
+    def start_collector(self) -> None:
+        """
+        Inicia (o reinicia) el collector sin reiniciar el runtime completo.
+        Útil para el botón 'Abrir navegador' en la UI.
+        """
+        try:
+            # Si ya está corriendo, no volver a iniciar
+            if getattr(self.collector, "running", False):
+                self.engine_out_q.put(info(EventType.HEARTBEAT, "Collector ya estaba en ejecución"))
+                return
+            self.collector.start()
+            self.engine_out_q.put(info(EventType.START, f"Collector iniciado (modo={self.mode})"))
+        except Exception as e:
+            self.engine_out_q.put(info(EventType.EXCEPTION, f"No se pudo iniciar collector: {e}"))
+            raise
 
     def stop_collector(self) -> None:
         """

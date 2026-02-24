@@ -91,6 +91,12 @@ class Database:
                 col_type = "TEXT" if col in ["obs_usuario", "mejor_oferta_txt", "obs_cambio"] else "REAL"
                 self.execute(f"ALTER TABLE renglon_excel ADD COLUMN {col} {col_type}")
 
+        # Migración tabla subasta: columna mi_id_proveedor
+        subasta_cols = self.fetchall("PRAGMA table_info(subasta)")
+        existing_subasta_cols = {c[1] for c in subasta_cols}
+        if "mi_id_proveedor" not in existing_subasta_cols:
+            self.execute("ALTER TABLE subasta ADD COLUMN mi_id_proveedor TEXT")
+
     def init_schema(self, schema_path: str | Path) -> None:
         """
         Ejecuta el schema.sql (idempotente gracias a IF NOT EXISTS).
@@ -232,6 +238,25 @@ class Database:
     def get_latest_subasta_id(self) -> int | None:
         row = self.fetchone("SELECT id FROM subasta ORDER BY id DESC LIMIT 1")
         return int(row["id"]) if row else None
+
+    def get_mi_id_proveedor(self, *, subasta_id: int) -> str | None:
+        """Devuelve el mi_id_proveedor asignado a la subasta, o None."""
+        row = self.fetchone("SELECT mi_id_proveedor FROM subasta WHERE id = ?", (subasta_id,))
+        return str(row["mi_id_proveedor"]) if row and row["mi_id_proveedor"] else None
+
+    def set_mi_id_proveedor(self, *, subasta_id: int, mi_id_proveedor: str | None) -> None:
+        """Guarda (o borra) el mi_id_proveedor de la subasta."""
+        self.execute(
+            "UPDATE subasta SET mi_id_proveedor = ? WHERE id = ?",
+            (mi_id_proveedor, subasta_id),
+        )
+
+    def get_mi_id_proveedor_by_id_cot(self, *, id_cot: str) -> str | None:
+        """Devuelve mi_id_proveedor buscando por id_cot."""
+        row = self.fetchone(
+            "SELECT mi_id_proveedor FROM subasta WHERE id_cot = ?", (id_cot,)
+        )
+        return str(row["mi_id_proveedor"]) if row and row["mi_id_proveedor"] else None
 
     def get_renglon_id_by_keys(
         self,
