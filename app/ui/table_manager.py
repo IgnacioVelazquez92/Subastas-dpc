@@ -218,7 +218,9 @@ class TableManager:
             width = self.config.column_widths.get(col, 120)
             
             self.tree.heading(col, text=label)
-            self.tree.column(col, width=width, anchor="w")
+            # Evita que Tk "compense" el ancho entre columnas vecinas.
+            # Si el ancho total supera el viewport, se usa el scroll horizontal.
+            self.tree.column(col, width=width, minwidth=40, anchor="w", stretch=False)
         
         # Asociar tooltips con la tabla
         self._setup_column_tooltips()
