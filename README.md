@@ -1,241 +1,310 @@
-# Monitor de Subastas Electrónicas
+﻿# Monitor de Subastas Electrónicas
 
-Aplicación de escritorio para monitoreo avanzado de subastas electrónicas en tiempo real del portal e-Commerce de la provincia de Córdoba. 
+> **v1.0**  Aplicación de escritorio para el monitoreo avanzado de subastas electrónicas en tiempo real del portal e-Commerce de la provincia de Córdoba (Argentina).
 
-Proporciona una **alternativa visual moderna** al portal oficial con:
-- Seguimiento automático de cambios de precios
-- Sistema de alertas configurables
-- Exportación/importación de datos a Excel
-- Persistencia de históricos en SQLite
-- Ordenamiento y filtros rápidos en la UI
+Proporciona una **interfaz visual moderna** como alternativa al portal oficial, con capacidades que el portal no ofrece:
+
+| Capacidad | Descripción |
+|---|---|
+| Seguimiento automático | Captura cambios de precio cada N segundos vía Playwright |
+| Alertas configurables | Notificaciones visuales y sonoras ante cambios relevantes |
+| Gestión Excel | Importa costos, exporta resultados con columnas calculadas |
+| Histórico completo | Persiste todos los cambios y ofertas en SQLite |
+| Filtros y ordenamiento | Vistas personalizadas, filtros rápidos, columnas configurables |
+| Modo testing | Escenarios JSON reproducibles para desarrollo sin portal real |
 
 ---
 
-## 🚀 Ejecución Rápida
+## Inicio Rápido
 
-### Producción (Playwright - Navegador Real)
+### Producción  Playwright (navegador real)
+
 ```bash
 python main.py --mode PLAYWRIGHT --poll-seconds 5
 ```
 
-### Testing Local (MOCK - Escenarios Ficticios)
+### Testing local  MOCK (escenarios ficticios)
+
 ```bash
 python main.py --mode MOCK --scenario "data/test_scenarios/scenario_controlled_real.json" --poll-seconds 5
 ```
 
 ---
 
-## 🎯 Arquitectura
+## Instalación
 
-**Flujo principal:** `Collector → Engine → UI` | `Engine → SQLite`
-
-### Componentes
-
-- **Collector**: Obtiene datos del portal real (Playwright) y emite eventos normalizados
-- **Engine**: Persiste en DB, aplica reglas de alertas/seguridad, emite eventos procesados
-- **UI**: Presenta información en tiempo real, permite edición de datos, dispara acciones (captura, Excel, limpieza)
-- **DB**: SQLite para observabilidad, histórico de cambios, configuración y datos Excel
-
-## ✅ Funcionalidades
-
-### Monitoreo en Tiempo Real
-- **Seguimiento automático**: Captura cambios de precios cada N segundos
-- **Alertas**: Notificaciones visuales/sonoras ante cambios significativos
-- **Histórico**: Persistencia de todos los cambios en SQLite
-- **USD persistente**: Conversión y costos USD se mantienen en BD y UI
-
-### Gestión de Datos Excel
-- **Importación**: Carga datos de costos y observaciones desde Excel
-- **Exportación**: Descarga de renglones con precios capturados y totales
-- **Edición**: Modifica datos directamente desde la UI
-
-### Control y Configuración
-- **Columnas configurables**: Personaliza vista con persistencia en BD
-- **Limpieza de datos**: Gestión de logs y estados históricos
-- **Control de ejecución**: Supervisión del ciclo de vida del monitoreo
-- **Ordenamiento**: Click en headers (incluye Renta a Mejorar %)
-- **Filtros rápidos**: Ocultar vacíos por columna, solo con costo, solo seguimiento
-
-## 📁 Estructura del Proyecto
-
-```
-monitor_subastas/
-├── main.py                    # Entry point principal
-├── requirements.txt           # Dependencias Python
-├── README.md
-│
-├── app/
-│   ├── core/
-│   │   ├── app_runtime.py     # Orquestador: Collector → Engine → UI
-│   │   ├── engine.py          # Motor: persistencia + alertas + seguridad
-│   │   ├── events.py          # Contratos de eventos
-│   │   ├── alert_engine.py    # Reglas de alertas (estilos, sonidos)
-│   │   ├── security.py        # Políticas de backoff ante errores
-│   │   ├── simulator_v2.py    # Simulador con escenarios JSON (testing)
-│   │   └── scenario_loader.py # Carga escenarios JSON
-│   │
-│   ├── collector/
-│   │   ├── base.py            # Interfaz BaseCollector
-│   │   ├── mock_collector.py  # Collector MOCK (escenarios JSON para UI testing)
-│   │   └── playwright_collector.py  # Collector PLAYWRIGHT (producción)
-│   │
-│   ├── db/
-│   │   ├── database.py        # Conexión SQLite + CRUD
-│   │   └── schema.sql         # Schema de la base de datos
-│   │
-│   ├── excel/
-│   │   └── excel_io.py        # Import/export Excel
-│   │
-│   ├── ui/
-│   │   └── app.py             # UI principal (Tkinter/CustomTkinter)
-│   │
-│   └── utils/
-│       ├── money.py           # Conversión money_to_float / float_to_money_txt
-│       └── time.py            # Helpers de timestamp
-│
-├── assets/
-│   ├── sounds/                # Archivos de audio para alertas
-│   └── icons/                 # Iconos de la aplicación
-│
-├── data/
-│   ├── monitor.db             # Base de datos SQLite (generada automáticamente)
-│   └── test_scenarios/        # Escenarios JSON para testing MOCK
-│
-├── scripts/
-│   └── create_db.py           # Script de inicialización DB
-│
-└── tests/
-    ├── test_mock_v2_integration.py
-    └── test_scenario_loader.py
-```
-
-## 🔑 Componentes Clave en Producción
-
-### `main.py`
-- **Entry point**: Parsea CLI, inicializa DB, crea AppRuntime y lanza UI
-- **CLI arguments**:
-  - `--mode PLAYWRIGHT`: Modo producción con navegador real
-  - `--mode MOCK`: Modo testing con escenarios JSON (desarrollo)
-  - `--poll-seconds`: Intervalo de chequeo (default: 1.0)
-  - `--headless`: Ejecuta Playwright sin UI del navegador
-
-### `app_runtime.py`
-- **AppRuntime**: Orquestador central
-  - `start()`: Inicia Engine y Collector en threads separados
-  - `stop()`: Detiene gracefully ambos componentes
-  - `update_renglon_excel()`, `export_excel()`, `import_excel()`: Operaciones Excel
-  - `cleanup_data()`: Limpieza de logs y históricos
-
-### `engine.py`
-- **Engine**: Motor de persistencia y procesamiento
-  - Consume eventos del Collector normalizados
-  - Aplica reglas de alertas (AlertEngine)
-  - Persiste cambios en SQLite
-  - Emite eventos procesados a UI
-
-### `playwright_collector.py`
-- **PlaywrightCollector**: Captura automática del portal
-  - Ejecuta browser automático en background
-  - Emite SNAPSHOT (estado inicial) y UPDATE (cambios) en tiempo real
-  - Emite HTTP_ERROR ante fallos de conexión
-  - Control via control_q desde AppRuntime
-
-### `alert_engine.py`
-- **AlertEngine**: Decisiones de alertas
-  - Evalúa cambios de precios vs reglas configuradas
-  - Decides: sonido, color, visibilidad, mensaje
-
-### `security.py`
-- **SecurityPolicy**: Manejo inteligente de errores
-  - Backoff progresivo ante fallos HTTP
-  - Stop automático si excede límites
-
-### `database.py`
-- **Operaciones principales**:
-  - Persistencia de subastas y renglones
-  - Histórico de cambios y ofertas
-  - Configuración de UI (columnas, preferencias)
-  - Datos Excel (costos, observaciones)
-
----
-
-## 🛠 Instalación
-
-### Requisitos
-- Python 3.10+
-- pip
-
-### Pasos
+**Requisitos:** Python 3.10+ y pip.
 
 ```bash
-# Clonar repositorio
-git clone <repo_url>
-cd monitor_subastas
-
-# Crear entorno virtual
+# 1. Crear entorno virtual
 python -m venv .venv
-source .venv/bin/activate  # En Windows: .venv\Scripts\activate
+.venv\Scripts\activate        # Windows
 
-# Instalar dependencias
+# 2. Instalar dependencias
 pip install -r requirements.txt
 
-# Inicializar base de datos
+# 3. Instalar navegadores de Playwright
+playwright install chromium
+
+# 4. Inicializar la base de datos (solo primera vez)
 python scripts/create_db.py
 ```
 
-## 🚀 Uso
-
-### Modo Producción (Playwright)
-```bash
-# Monitoreo normal (UI del navegador visible)
-python main.py --mode PLAYWRIGHT --poll-seconds 5
-
-# Modo headless (sin UI del navegador)
-python main.py --mode PLAYWRIGHT --headless --poll-seconds 5
-```
-
-### Modo Testing (MOCK con Escenarios JSON)
-Para desarrollar/testear la UI sin acceso a subastas reales:
-
-```bash
-# Escenario controlado con datos reales
-python main.py --mode MOCK --scenario "data/test_scenarios/scenario_controlled_real.json" --poll-seconds 5
-```
-
-**Nota**: MOCK es **solo para testing de UI**. En producción el lunes usarás PLAYWRIGHT.
-
-## 🧰 UI: Ordenamiento y Filtros
-
-- **Ordenar por Renta a Mejorar %**: click en el header de la columna `Renta a Mejorar %`.
-- **Ocultar vacías**: permite elegir una columna y ocultar filas sin valor.
-- **Solo con costo**: muestra únicamente renglones con costo unitario o total.
-- **Solo seguimiento**: filtra renglones marcados como seguimiento.
-- **Solo en carrera**: oculta renglones donde `renta_para_mejorar` < `renta_minima` (fuera de umbral).
-
-## 📊 Cómo Hacer Seguimiento
-
-El seguimiento activa alertas visuales/sonoras en un renglón. Para hacerlo:
-
-1. **Selecciona renglón** en la tabla (click)
-2. **Abre Opciones → Editar renglón** (o botón en la barra)
-3. En el diálogo, marca el **checkbox "Seguir este renglón"**
-4. Confirma y guarda
-
-A partir de ese momento:
-- El renglón cambia de estilo a **TRACKED** (fondo celeste)
-- Recibirá alertas si el precio cambia significativamente
-- Filtro **"Solo seguimiento"** lo mantiene visible cuando está activo
-
-## ℹ️ Información Adicional
-
-### Para Testing (Desarrollo de UI)
-Los escenarios JSON en `data/test_scenarios/` contienen respuestas reales capturadas del portal. Úsalos para desarrollar/validar la UI sin depender de subastas reales.
-
-### Captura de Datos Reales
-Para crear nuevos escenarios con datos reales del portal, consulta [GUIA_CAPTURA_DATOS.md](GUIA_CAPTURA_DATOS.md).
+La base de datos `data/monitor.db` también se crea automáticamente al ejecutar `main.py`.
 
 ---
 
-## 📝 Licencia
+## Argumentos CLI
 
-[Especificar licencia]
+| Argumento | Tipo | Default | Descripción |
+|---|---|---|---|
+| `--mode` | `PLAYWRIGHT` / `MOCK` | `MOCK` | Fuente de datos |
+| `--scenario` | path |  | JSON de escenario (requerido en MOCK) |
+| `--poll-seconds` | float | `1.0` | Intervalo de polling en segundos |
+| `--headless` | flag | off | Playwright sin ventana de navegador |
+
+### Ejemplos
+
+```bash
+# Producción visible
+python main.py --mode PLAYWRIGHT --poll-seconds 5
+
+# Producción headless
+python main.py --mode PLAYWRIGHT --headless --poll-seconds 10
+
+# MOCK: escenario de guerra de precios
+python main.py --mode MOCK --scenario "data/test_scenarios/scenario_price_war.json" --poll-seconds 2
+
+# MOCK: escenario con datos reales capturados
+python main.py --mode MOCK --scenario "data/test_scenarios/scenario_controlled_real.json" --poll-seconds 5
+```
+
+---
+
+## Arquitectura
+
+```
++-----------------------------------------------------------+
+|                         main.py                           |
+|   bootstrap_db() -> AppRuntime.start() -> App().mainloop  |
++------------------+-----------------------------+----------+
+                   | control_q / eventos         | handles
+                   v                             v
+  +--------------------+             +------------------------+
+  |      Collector     | eventos ->  |        Engine          |
+  |   (thread propio)  | ----------> |    (thread propio)     |
+  |                    |             |  - Persiste en SQLite  |
+  |  PLAYWRIGHT:       |             |  - AlertEngine         |
+  |   Chromium +       |             |  - SecurityPolicy      |
+  |   scraping real    |             |  - Emite a UI          |
+  |                    |             +----------+-------------+
+  |  MOCK:             |                        | eventos procesados
+  |   SimulatorV2 +    |                        v
+  |   JSON scenario    |             +------------------------+
+  +--------------------+             |      UI (Tkinter)      |
+                                     |  - Tabla de renglones  |
+                                     |  - Logger widget       |
+                                     |  - LED de estado       |
+                                     |  - Diálogos edicion    |
+                                     +------------------------+
+```
+
+**Principio clave:** cada capa solo conoce a la siguiente; la comunicación es via eventos tipados (`EventType`).
+
+### Eventos del sistema (`app/core/events.py`)
+
+| Evento | Emitido por | Descripción |
+|---|---|---|
+| `SNAPSHOT` | Collector | Estado completo inicial de la subasta |
+| `UPDATE` | Collector | Cambio detectado en un renglon |
+| `HEARTBEAT` | Collector | Pulso periódico, sin cambios |
+| `ALERT` | Engine | Alerta de negocio (cambio significativo) |
+| `HTTP_ERROR` | Collector | Error de conexión con el portal |
+| `SECURITY` | Engine | Backoff activado por errores acumulados |
+| `START` / `STOP` / `END` | Engine | Ciclo de vida de la sesión |
+
+---
+
+## Estructura del Proyecto
+
+```
+monitor_subastas/
+ main.py                        # Entry point: CLI -> DB -> AppRuntime -> UI
+ requirements.txt
+ README.md
+ AGENTS.md                      # Contexto para agentes IA / onboarding
+
+ app/
+    core/
+       app_runtime.py         # Orquestador central (threads + queues)
+       engine.py              # Motor: persiste + alertas + seguridad -> UI
+       events.py              # Contratos de eventos (dataclasses + Enum)
+       alert_engine.py        # Reglas: estilo, sonido, visibilidad
+       security.py            # Backoff progresivo ante errores HTTP
+       simulator_v2.py        # Reproduce escenarios JSON (MOCK)
+       scenario_loader.py     # Carga y valida archivos JSON
+   
+    collector/
+       base.py                # Interfaz BaseCollector
+       mock_collector.py      # Collector MOCK -> SimulatorV2
+       playwright_collector.py# Collector producción (Chromium)
+   
+    db/
+       database.py            # Clase Database: SQLite CRUD + init_schema
+       schema.sql             # DDL completo
+   
+    excel/
+       excel_io.py            # Importar / exportar con openpyxl
+   
+    models/
+       domain.py              # Dataclasses: Subasta, Renglon, RenglonEstado
+   
+    ui/
+       app.py                 # Ventana principal (CustomTkinter)
+       column_manager.py      # Configuración de columnas con persistencia
+       event_handler.py       # Despacha eventos del Engine a la UI
+       formatters.py          # Formateo de celdas (colores, porcentajes, $)
+       improved_logger.py     # Widget logger mejorado
+       led_indicator.py       # Indicador LED de estado de conexión
+       logger_widget.py       # Widget logger base
+       row_editor.py          # Diálogo de edición de renglon
+       state.py               # Estado mutable de la UI
+       table_manager.py       # Gestión de la tabla (insertar/actualizar/ordenar)
+       views/                 # Vistas secundarias
+   
+    utils/
+        audio.py               # Reproducción de alertas sonoras + generación WAV
+        money.py               # money_to_float / float_to_money_txt
+        time.py                # Helpers de timestamp
+
+ assets/
+    sounds/                    # WAV de alertas (generados automáticamente)
+    icons/
+
+ data/
+    monitor.db                 # SQLite (auto-generada)
+    test_scenarios/            # JSONs para modo MOCK
+        scenario_basic.json
+        scenario_controlled_real.json
+        scenario_http_errors.json
+        scenario_price_war.json
+        scenario_specific_timeline.json
+
+ docs/                          # Documentación técnica y decisiones de diseño
+ scripts/
+    create_db.py               # Script standalone de inicialización DB
+ tests/                         # Suite de tests unitarios e integración
+```
+
+---
+
+## Funcionalidades de la UI
+
+### Tabla de Renglones
+
+Cada fila representa un renglon de subasta con las siguientes columnas clave:
+
+| Columna | Descripción |
+|---|---|
+| Renglón | ID y descripción del ítem |
+| Mejor Oferta | Precio líder actual del portal |
+| Mi Oferta | Precio propio registrado |
+| Costo Unitario / Total | Importados desde Excel |
+| Renta a Mejorar % | Margen calculado respecto a la mejor oferta |
+| USD | Equivalente en dólares (cotización configurable) |
+| Seguimiento | Si el renglon está marcado para alertas |
+
+### Filtros Rápidos
+
+- **Ocultar vacías**: elige una columna y oculta filas sin valor
+- **Solo con costo**: muestra únicamente renglones con costo cargado
+- **Solo seguimiento**: muestra solo renglones marcados como seguimiento
+- **Solo en carrera**: oculta renglones donde `renta_para_mejorar < renta_minima`
+
+### Ordenamiento
+
+Click en cualquier header para ordenar. La columna `Renta a Mejorar %` ordena numéricamente incluso con formato porcentual.
+
+### Seguimiento de Renglones
+
+El modo de seguimiento activa alertas visuales y sonoras sobre un renglon:
+
+1. Seleccionar renglon  **Opciones  Editar renglon**
+2. Marcar **"Seguir este renglon"**  Guardar
+
+El renglon pasa a estilo `TRACKED` (fondo celeste) y recibe alertas ante cambios significativos de precio.
+
+---
+
+## Gestión Excel
+
+### Importar costos
+
+Cargar un Excel con columnas de costo unitario/total y observaciones. Los datos se asocian por `id_renglon` y persisten en la BD.
+
+### Exportar resultados
+
+Genera un Excel con todos los renglones, sus precios capturados, costos y columnas calculadas (renta, totales, USD).
+
+---
+
+## Modelos de Dominio (`app/models/domain.py`)
+
+```python
+Subasta          # Una subasta: id_cot, url, estado, proveedor propio
+Renglon          # Un ítem dentro de una subasta: id_renglon, descripción
+RenglonEstado    # Estado actual: mejor_oferta, mi_oferta, historico de cambios
+```
+
+---
+
+## Tests
+
+```bash
+# Ejecutar toda la suite
+python -m pytest tests/ -v
+
+# Tests específicos
+python -m pytest tests/test_mock_v2_integration.py -v
+python -m pytest tests/test_formatters_parse_float.py -v
+python -m pytest tests/test_renta_format_v2.py -v
+```
+
+### Escenarios MOCK disponibles
+
+| Archivo | Descripción |
+|---|---|
+| `scenario_basic.json` | Caso base, pocos renglones |
+| `scenario_controlled_real.json` | Datos reales capturados del portal |
+| `scenario_price_war.json` | Cambios rápidos de precio (stress test alertas) |
+| `scenario_http_errors.json` | Simula fallos de red y backoff |
+| `scenario_specific_timeline.json` | Timeline con eventos en tiempos exactos |
+
+---
+
+## Dependencias
+
+| Paquete | Versión | Uso |
+|---|---|---|
+| `customtkinter` | 5.2.2 | UI moderna sobre Tkinter |
+| `playwright` | 1.58.0 | Scraping del portal (modo PLAYWRIGHT) |
+| `openpyxl` | 3.1.5 | Import/export Excel |
+| `darkdetect` | 0.8.0 | Detección del tema del sistema |
+
+---
+
+## Documentación Técnica
+
+Ver carpeta [`docs/`](docs/) para guías detalladas:
+
+- [GUIA_CAPTURA_DATOS.md](docs/GUIA_CAPTURA_DATOS.md)  Cómo capturar datos reales para escenarios
+- [GUIA_FORMATO_RENTA.md](docs/GUIA_FORMATO_RENTA.md)  Lógica de cálculo de renta
+- [GUIA_MANTENCION_UI.md](docs/GUIA_MANTENCION_UI.md)  Mantenimiento y extensión de la UI
+- [VERIFICACION_CALCULOS.md](docs/VERIFICACION_CALCULOS.md)  Validación de fórmulas de negocio
+- [USO_ESCENARIOS_V2.md](docs/USO_ESCENARIOS_V2.md)  Formato y uso de escenarios JSON
+
+---
+
+## Licencia
+
+Uso privado  proyecto propietario.

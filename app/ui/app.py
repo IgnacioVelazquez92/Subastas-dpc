@@ -31,6 +31,7 @@ from app.ui.row_editor import RowEditorDialog
 from app.ui.logger_widget import LoggerWidget
 from app.ui.formatters import DisplayValues
 from app.ui.led_indicator import HTTPStatusLED, OfferChangeLED
+from app.ui.views.info_view import InfoWindow
 
 
 class App(ctk.CTk):
@@ -160,6 +161,13 @@ class App(ctk.CTk):
             text="⚙️  Opciones",
             command=self._show_options_menu,
             width=120,
+        ).pack(side="left", padx=4)
+
+        ctk.CTkButton(
+            control_frame,
+            text="ℹ️  Info",
+            command=self._show_info,
+            width=80,
         ).pack(side="left", padx=4)
 
         ctk.CTkSwitch(
@@ -425,6 +433,10 @@ class App(ctk.CTk):
 
         # Mostrar menú en la posición del mouse
         menu.post(self.winfo_pointerx(), self.winfo_pointery())
+
+    def _show_info(self) -> None:
+        """Abre la ventana de información y actualizaciones."""
+        InfoWindow(self)
 
     def _increase_header_height(self) -> None:
         if not self.table_mgr:
