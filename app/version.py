@@ -15,8 +15,8 @@ VERSION_ACTUAL = "1.0.0"
 
 # ─── Configuración del repositorio GitHub ────────────────────────────────────
 # Usuario y repositorio donde se alojan los releases y version.txt
-GITHUB_USER = "TU_USUARIO_GITHUB"        # <-- Reemplazar con tu usuario
-GITHUB_REPO = "monitor_subastas"         # <-- Reemplazar con el nombre del repo
+GITHUB_USER = "IgnacioVelazquez92"
+GITHUB_REPO = "Subastas-dpc"
 
 # URL raw de version.txt (se consulta para verificar si hay nueva versión)
 VERSION_TXT_URL = (
