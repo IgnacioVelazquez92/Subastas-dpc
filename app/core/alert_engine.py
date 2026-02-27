@@ -119,14 +119,25 @@ class AlertEngine:
                 message="Subasta finalizada",
             )
 
-        # 3a) Oferta propia SUPERADA → alerta inmediata con sonido
+        # 3a) Oferta propia SUPERADA:
+        # mantener alerta sonora/log, pero NO forzar color OUTBID.
+        # El color debe seguir reflejando utilidad para decidir si conviene reofertar.
         if outbid:
+            if utilidad_pct is not None:
+                if utilidad_pct >= utilidad_min_pct + 5.0:
+                    style = RowStyle.SUCCESS
+                elif utilidad_pct >= utilidad_min_pct:
+                    style = RowStyle.WARNING
+                else:
+                    style = RowStyle.DANGER
+            else:
+                style = RowStyle.TRACKED if tracked else RowStyle.NORMAL
             return AlertDecision(
-                style=RowStyle.OUTBID,
+                style=style,
                 play_sound=SoundCue.ALERT,
                 highlight=True,
                 hide=False,
-                message="⚠️ ¡Tu oferta fue superada!",
+                message="⚠️ ¡Tu oferta fue superada! (color según utilidad)",
             )
 
         # 3b) Oferta propia vigente (auto-detectada por id_proveedor)

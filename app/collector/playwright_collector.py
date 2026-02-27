@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from datetime import datetime
 from threading import Thread
 from queue import Queue, Empty
 
@@ -84,13 +85,16 @@ class PlaywrightCollector(BaseCollector):
         # Modo sueño: una consulta rotativa por renglón.
         self.relaxed_poll_seconds = max(1.0, self.poll_seconds)
         # Tuning de latencia (INTENSIVA):
-        # Para hasta 50 renglones, usamos una sola tanda grande.
-        # peor caso aprox = ceil(renglones/batch_size) * timeout.
-        # Con 50 renglones, batch=50 y timeout=4000ms => ~4.0s.
-        self.intensive_batch_size = 50
+        # Evitar ráfagas de concurrencia muy grandes:
+        # en portal real tienden a subir HTTP 0/500.
+        self.intensive_batch_size = 3
         self.relaxed_batch_size = 10
-        self.intensive_request_timeout_ms = 4000
+        self.intensive_request_timeout_ms = 1800
+        self.intensive_retry_timeout_ms = 0
         self.relaxed_request_timeout_ms = 5000
+        self.console_perf_logs = True
+        # Guard-rail para evitar ciclos "colgados" por evaluate/fetch del browser.
+        self.batch_guard_extra_seconds = 1.5
 
         self._thread: Thread | None = None
         self._stop_flag = False
@@ -614,6 +618,18 @@ class PlaywrightCollector(BaseCollector):
         batch_size = max(1, int(size))
         return [items[i:i + batch_size] for i in range(0, len(items), batch_size)]
 
+    def _pick_intensive_batch_size(self, total_rows: int) -> int:
+        """
+        Selecciona concurrencia en INTENSIVA según cantidad de renglones.
+        Menor concurrencia en subastas chicas reduce errores del portal.
+        """
+        n = max(1, int(total_rows))
+        if n <= 12:
+            return 3
+        if n <= 24:
+            return 4
+        return min(self.intensive_batch_size, n)
+
     async def _fetch_buscar_ofertas_batch(self, page, payloads: list[dict], *, timeout_ms: int = 3000) -> list[dict]:
         """
         Ejecuta múltiples fetch en paralelo dentro de la página.
@@ -696,9 +712,12 @@ class PlaywrightCollector(BaseCollector):
 
             total_batches = 0
             total_updates = 0
+            total_retries = 0
+            total_http_errors = 0
+            total_timeouts = 0
             if self.intensive_mode:
                 cycle_renglones = list(renglones)
-                batch_size = max(1, min(self.intensive_batch_size, len(cycle_renglones)))
+                batch_size = self._pick_intensive_batch_size(len(cycle_renglones))
                 request_timeout_ms = int(self.intensive_request_timeout_ms)
             else:
                 # Modo sueño: solo un renglón por ciclo (rotativo).
@@ -723,11 +742,18 @@ class PlaywrightCollector(BaseCollector):
                 ]
 
                 try:
-                    results = await self._fetch_buscar_ofertas_batch(
-                        page,
-                        payloads,
-                        timeout_ms=request_timeout_ms,
+                    guard_timeout = (float(request_timeout_ms) / 1000.0) + float(self.batch_guard_extra_seconds)
+                    results = await asyncio.wait_for(
+                        self._fetch_buscar_ofertas_batch(
+                            page,
+                            payloads,
+                            timeout_ms=request_timeout_ms,
+                        ),
+                        timeout=guard_timeout,
                     )
+                except asyncio.TimeoutError:
+                    # Timeout duro del evaluate/fetch: evitar congelar el ciclo completo.
+                    results = [{"status": 0, "json": None, "error": "timeout"} for _ in payloads]
                 except Exception as e:
                     msg = str(e).lower()
                     if "closed" in msg or "target page" in msg or "target closed" in msg:
@@ -736,6 +762,37 @@ class PlaywrightCollector(BaseCollector):
                     self.emit(error(EventType.EXCEPTION, f"Fetch batch BuscarOfertas falló: {e}"))
                     continue
 
+                # Reintento rápido para timeouts HTTP=0 en INTENSIVA.
+                # Reduce falsos negativos sin degradar demasiado la cadencia.
+                if self.intensive_mode and self.intensive_retry_timeout_ms > 0 and results:
+                    retry_payloads: list[dict] = []
+                    retry_indexes: list[int] = []
+                    for idx, res in enumerate(results):
+                        status = int((res or {}).get("status", 0))
+                        err_kind = str((res or {}).get("error") or "").lower()
+                        if status == 0 and err_kind == "timeout":
+                            retry_payloads.append(payloads[idx])
+                            retry_indexes.append(idx)
+
+                    if retry_payloads:
+                        total_retries += len(retry_payloads)
+                        try:
+                            retry_guard_timeout = (float(self.intensive_retry_timeout_ms) / 1000.0) + float(self.batch_guard_extra_seconds)
+                            retry_results = await asyncio.wait_for(
+                                self._fetch_buscar_ofertas_batch(
+                                    page,
+                                    retry_payloads,
+                                    timeout_ms=int(self.intensive_retry_timeout_ms),
+                                ),
+                                timeout=retry_guard_timeout,
+                            )
+                            for ridx, retry_res in zip(retry_indexes, retry_results):
+                                if retry_res:
+                                    results[ridx] = retry_res
+                        except Exception:
+                            # Si falla el retry, conservamos el resultado original.
+                            pass
+
                 for opt, res in zip(chunk, results):
                     rid = opt.get("value")
                     desc = opt.get("text") or ""
@@ -743,9 +800,12 @@ class PlaywrightCollector(BaseCollector):
                     body = ((res or {}).get("json") or {})
 
                     if status != 200:
+                        total_http_errors += 1
                         if status == 0:
                             err_kind = str((res or {}).get("error") or "").lower()
                             is_timeout = err_kind == "timeout"
+                            if is_timeout:
+                                total_timeouts += 1
                             self.emit(
                                 warn(
                                     EventType.HTTP_ERROR,
@@ -851,12 +911,24 @@ class PlaywrightCollector(BaseCollector):
                     (
                         f"[METRICA] ciclo={tick} renglones={len(renglones)} "
                         f"updates={total_updates} batches={total_batches} "
+                        f"retries={total_retries} "
                         f"intervalo_real_por_renglon={cycle_total:.2f}s "
                         f"(modo={'INTENSIVA' if self.intensive_mode else 'SUEÑO'} "
                         f"poll_efectivo={effective_poll:.2f}s batch={batch_size} timeout={request_timeout_ms}ms)"
                     ),
                 )
             )
+            if self.console_perf_logs:
+                ts = datetime.now().strftime("%H:%M:%S")
+                mode_txt = "INTENSIVA" if self.intensive_mode else "SUEÑO"
+                print(
+                    f"[{ts}] [PERF] ciclo={tick} modo={mode_txt} "
+                    f"dur={cycle_total:.2f}s updates={total_updates}/{len(renglones)} "
+                    f"http_err={total_http_errors} timeouts={total_timeouts} "
+                    f"batch={batch_size} timeout={request_timeout_ms}ms retries={total_retries} "
+                    f"poll_efectivo={effective_poll:.2f}s",
+                    flush=True,
+                )
 
         self.emit(info(EventType.STOP, "Monitoreo detenido (stop_flag=True)."))
 

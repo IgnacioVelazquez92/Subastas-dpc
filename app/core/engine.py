@@ -55,6 +55,7 @@ class Engine:
 
         self.config = config or EngineConfig()
         self.current_poll_seconds = 1.0
+        self.base_poll_seconds = 1.0
         self.alert_engine = AlertEngine()
         self.security = SecurityPolicy()
 
@@ -70,6 +71,7 @@ class Engine:
         # estado operativo para seguridad
         self.subasta_err_streak: dict[int, int] = {}
         self.subasta_last_ok_at: dict[int, Optional[str]] = {}
+        self.subasta_last_error_at: dict[int, Optional[datetime]] = {}
 
         # firmas por renglón (para detectar cambios)
         self.last_sig_by_renglon_pk: dict[int, str] = {}
@@ -90,6 +92,9 @@ class Engine:
 
     def set_current_poll_seconds(self, seconds: float) -> None:
         self.current_poll_seconds = max(0.2, float(seconds))
+
+    def set_base_poll_seconds(self, seconds: float) -> None:
+        self.base_poll_seconds = max(0.2, float(seconds))
 
     def refresh_mi_id_proveedor(self, subasta_id: int) -> None:
         """Invalida cache de mi_id_proveedor para que se recargue desde DB en el siguiente tick."""
@@ -408,6 +413,7 @@ class Engine:
 
         self.subasta_last_ok_at[subasta_id] = ts
         self.subasta_err_streak[subasta_id] = 0
+        self.subasta_last_error_at[subasta_id] = None
         self.db.set_subasta_estado(
             subasta_id=subasta_id,
             estado="RUNNING",
@@ -415,6 +421,12 @@ class Engine:
             last_http_code=http_status,
             err_streak=0,
         )
+
+        # Recuperar cadencia base tras volver a recibir datos válidos.
+        if self.current_poll_seconds > self.base_poll_seconds:
+            self.current_poll_seconds = float(self.base_poll_seconds)
+            if self.control_q is not None:
+                self.control_q.put({"action": "BACKOFF", "seconds": float(self.base_poll_seconds)})
 
         sig = f"{mejor_txt}|{oferta_min_txt}|{mensaje}"
         changed = self.last_sig_by_renglon_pk.get(renglon_pk) != sig
@@ -473,15 +485,8 @@ class Engine:
         # REFACTORING: Resolver bidirecionaldad de costos ARS
         # Definir costo_subtotal antes de usar should_log
         costo_subtotal = None
-        # 🎯 LOGGING CONDICIONAL: Solo si hay cambios reales
-        should_log = bool(
-            changed
-            and (
-                costo_unit_ars is not None
-                or renta_minima is not None
-                or oferta_min_val is not None
-            )
-        )  # Log solo con cambios y datos relevantes
+        # Logs de cálculo desactivados por defecto para evitar ruido en consola.
+        should_log = False
         
         if should_log:
             print(f"\n{'='*60}")
@@ -851,7 +856,16 @@ class Engine:
             return
 
         prev = int(self.subasta_err_streak.get(subasta_id, 0))
-        streak = prev + 1
+        now_dt = datetime.now()
+        last_err_dt = self.subasta_last_error_at.get(subasta_id)
+        # Evitar escalar streak por múltiples errores del mismo ciclo/lote.
+        # Contamos un nuevo "paso" de error solo si pasó una ventana mínima.
+        error_window_seconds = 1.5
+        if last_err_dt and (now_dt - last_err_dt).total_seconds() < error_window_seconds:
+            streak = prev
+        else:
+            streak = prev + 1
+            self.subasta_last_error_at[subasta_id] = now_dt
         self.subasta_err_streak[subasta_id] = streak
         last_ok_at = self.subasta_last_ok_at.get(subasta_id)
 
@@ -871,10 +885,17 @@ class Engine:
             mensaje=str(ev.message),
         )
 
+        detail = f"HTTP={http_status} streak={streak} -> {decision.action.value} ({decision.message})"
+        if decision.action == SecurityAction.BACKOFF and decision.new_poll_seconds:
+            detail = (
+                f"{detail} poll={self.current_poll_seconds:.2f}s"
+                f"→{float(decision.new_poll_seconds):.2f}s"
+            )
+
         self.emit_ui(
             warn(
                 EventType.HTTP_ERROR,
-                f"HTTP={http_status} streak={streak} -> {decision.action.value} ({decision.message})",
+                detail,
                 payload={
                     "http_status": http_status,
                     "id_cot": id_cot,

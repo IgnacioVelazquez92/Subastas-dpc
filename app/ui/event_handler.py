@@ -130,7 +130,7 @@ class EventProcessor:
             return
 
         if ev.type == EventType.HEARTBEAT:
-            # Evitar spam en logs operativos.
+            # Evitar spam en logs operativos de la app.
             return
         
         # Otros eventos (HEARTBEAT, DEBUG) se ignoran en logs
@@ -198,9 +198,11 @@ class EventProcessor:
                 pw_ts = str(payload.get("hora_ultima_oferta") or "").strip()
                 local_ts = local_update_dt.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
                 delta_txt = self._compute_offer_delta_txt(playwright_time=pw_ts, local_dt=local_update_dt)
+                prov_id = payload.get("mejor_id_proveedor")
+                prov_txt = str(prov_id).strip() if prov_id is not None and str(prov_id).strip() else "-"
                 self.log(
                     f"📊 [{rid}] {row.desc}: {old_mejor_txt} → {row.mejor_oferta_txt} | "
-                    f"playwright={pw_ts or '-'} | local={local_ts} | delta={delta_txt}"
+                    f"prov={prov_txt} | playwright={pw_ts or '-'} | local={local_ts} | delta={delta_txt}"
                 )
                 # Disparar LED de cambios de oferta (será implementado en app.py)
                 try:
@@ -318,10 +320,12 @@ class EventProcessor:
             try:
                 play_outbid_alert()
             except Exception:
-                try:
-                    self.bell()
-                except Exception:
-                    pass
+                pass
+            # Fallback explícito: asegurar señal audible aunque falle el backend de audio.
+            try:
+                self.bell()
+            except Exception:
+                pass
             self.log(
                 f"🔔 [{row.id_renglon}] ¡OFERTA SUPERADA! "
                 f"(nuevo proveedor: {payload.get('mejor_id_proveedor', '?')})"

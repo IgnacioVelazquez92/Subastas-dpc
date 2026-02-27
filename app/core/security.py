@@ -57,6 +57,8 @@ class SecurityPolicy:
         max_minutes_without_ok: int = 5,
         backoff_multiplier: float = 2.0,
         max_poll_seconds: float = 30.0,
+        backoff_on_http0_timeout: bool = False,
+        min_error_streak_for_backoff: int = 2,
     ):
         """
         Parámetros:
@@ -64,11 +66,15 @@ class SecurityPolicy:
         - max_minutes_without_ok: tiempo máximo sin un OK válido
         - backoff_multiplier: factor para aumentar poll_seconds
         - max_poll_seconds: tope del backoff
+        - backoff_on_http0_timeout: si False, HTTP=0 timeout solo alerta (sin subir poll)
+        - min_error_streak_for_backoff: errores consecutivos mínimos para aplicar backoff
         """
         self.max_error_streak = max_error_streak
         self.max_minutes_without_ok = max_minutes_without_ok
         self.backoff_multiplier = backoff_multiplier
         self.max_poll_seconds = max_poll_seconds
+        self.backoff_on_http0_timeout = bool(backoff_on_http0_timeout)
+        self.min_error_streak_for_backoff = max(1, int(min_error_streak_for_backoff))
 
     # -------------------------------------------------
     # Evaluación principal
@@ -97,11 +103,31 @@ class SecurityPolicy:
 
         # 2) Error HTTP actual
         if http_status != 200:
+            msg = (mensaje or "").lower()
+            # HTTP=0 timeout/abort suele ser transitorio del browser/red.
+            # En este caso evitamos backoff para no degradar la latencia global.
+            is_http0_timeout = http_status == 0 and ("timeout" in msg or "abort" in msg)
+            if is_http0_timeout and not self.backoff_on_http0_timeout:
+                return SecurityDecision(
+                    action=SecurityAction.ALERT,
+                    message="HTTP 0 timeout transitorio (sin backoff)",
+                )
+
             # Si la racha es demasiado larga, detener
             if err_streak >= self.max_error_streak:
                 return SecurityDecision(
                     action=SecurityAction.STOP,
                     message=f"Demasiados errores HTTP consecutivos ({err_streak})",
+                )
+
+            # Evitar degradar por errores aislados.
+            if err_streak < self.min_error_streak_for_backoff:
+                return SecurityDecision(
+                    action=SecurityAction.ALERT,
+                    message=(
+                        f"HTTP {http_status} transitorio "
+                        f"(streak {err_streak}/{self.min_error_streak_for_backoff})"
+                    ),
                 )
 
             # Si todavía estamos dentro del margen, aplicar backoff

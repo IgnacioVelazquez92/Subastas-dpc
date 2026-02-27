@@ -75,7 +75,8 @@ class AppRuntime:
         self.db = db
         self.mode: Mode = mode
         self.headless = bool(headless)
-        self.poll_seconds = float(poll_seconds)
+        self.base_poll_seconds = max(0.2, float(poll_seconds))
+        self.poll_seconds = float(self.base_poll_seconds)
         self.scenario_path = scenario_path
         self.autostart_collector = bool(autostart_collector)
 
@@ -97,6 +98,7 @@ class AppRuntime:
             control_q=self.control_q,
             config=EngineConfig(agg_window_seconds=30),
         )
+        self.engine.set_base_poll_seconds(self.base_poll_seconds)
         self.engine.set_current_poll_seconds(self.poll_seconds)
 
         # Collector (según modo)
@@ -395,6 +397,19 @@ class AppRuntime:
                 self.collector.set_intensive_monitoring(bool(enabled))
             elif self.mode == "PLAYWRIGHT":
                 self.collector_cmd_q.put({"cmd": "set_intensive", "enabled": bool(enabled)})
+
+            # Al volver a INTENSIVA, restaurar la cadencia base para evitar
+            # arrastrar backoffs históricos y recuperar velocidad real.
+            if bool(enabled):
+                self.poll_seconds = float(self.base_poll_seconds)
+                try:
+                    self.collector.set_poll_seconds(self.poll_seconds)
+                except Exception:
+                    pass
+                try:
+                    self.engine.set_current_poll_seconds(self.poll_seconds)
+                except Exception:
+                    pass
             mode_txt = "INTENSIVA" if bool(enabled) else "SUEÑO"
             self.engine_out_q.put(info(EventType.HEARTBEAT, f"Supervisión {mode_txt} solicitada por UI"))
         except Exception as e:
