@@ -42,6 +42,7 @@ from playwright.async_api import async_playwright, TimeoutError as PWTimeoutErro
 
 from app.collector.base import BaseCollector
 from app.core.events import EventType, info, warn, error, debug, Event
+from app.utils.renglon_math import resolve_cantidad_equivalente
 from app.utils.money import money_to_float
 
 
@@ -474,6 +475,7 @@ class PlaywrightCollector(BaseCollector):
 
     async def _parse_detalle_table(self, page) -> list[dict]:
         rows = []
+        pending_detalle_rows: list[dict] = []
         try:
             data = await page.locator(
                 "#gvDetalleCotizacion tr.Renglon, #gvDetalleCotizacion tr.RenglonAlternativo"
@@ -506,11 +508,15 @@ class PlaywrightCollector(BaseCollector):
             precio_ref_unit = precio_ref_col3
             if is_resumen and presupuesto is not None and cantidad not in (None, 0):
                 try:
-                    precio_ref_unit = float(presupuesto) / float(cantidad)
+                    cantidad_equivalente = resolve_cantidad_equivalente(
+                        cantidad,
+                        float(len(pending_detalle_rows) or 1),
+                    )
+                    precio_ref_unit = float(presupuesto) / float(cantidad_equivalente)
                 except Exception:
                     precio_ref_unit = None
 
-            rows.append({
+            row = {
                 "idx": idx,
                 "descripcion": desc,
                 "is_resumen": is_resumen,
@@ -522,7 +528,14 @@ class PlaywrightCollector(BaseCollector):
                 # Precio de referencia total / Presupuesto Oficial (columna 4)
                 "precio_referencia": presupuesto,
                 "presupuesto": presupuesto,
-            })
+            }
+            if is_resumen:
+                row["items_por_renglon"] = float(len(pending_detalle_rows) or 1)
+                pending_detalle_rows = []
+            else:
+                row["items_por_renglon"] = 1.0
+                pending_detalle_rows.append(row)
+            rows.append(row)
 
         return rows
 
@@ -629,6 +642,7 @@ class PlaywrightCollector(BaseCollector):
             enriched.append({
                 **opt,
                 "cantidad": det.get("cantidad"),
+                "items_por_renglon": det.get("items_por_renglon", 1.0),
                 "precio_referencia": det.get("precio_referencia"),
                 "precio_ref_unitario": det.get("precio_ref_unitario"),
                 "presupuesto": det.get("presupuesto"),

@@ -150,6 +150,7 @@ class AppRuntime:
             renglon_id=renglon_id,
             unidad_medida=unidad_medida,
             cantidad=existing.get("cantidad"),
+            items_por_renglon=existing.get("items_por_renglon"),
             marca=marca,
             obs_usuario=obs_usuario,
             conv_usd=conv_usd_value,  # Guardar en columna NUEVA
@@ -319,6 +320,7 @@ class AppRuntime:
                 precio_referencia=existing.get("precio_referencia"),
                 precio_referencia_subasta=existing.get("precio_referencia_subasta"),
                 cantidad=existing.get("cantidad"),  # De Playwright, no del usuario
+                items_por_renglon=existing.get("items_por_renglon"),
                 updated_at=now_iso(),
             )
             updated += 1

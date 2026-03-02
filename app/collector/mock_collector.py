@@ -92,6 +92,7 @@ class MockCollector(BaseCollector):
                         "value": rid,
                         "text": desc,
                         "cantidad": 1.0,  # No disponible en JSON
+                        "items_por_renglon": 1.0,
                         "precio_referencia": st.presupuesto_val if st.presupuesto_val else 0.0,
                         "presupuesto": st.presupuesto_val if st.presupuesto_val else 0.0,
                     }

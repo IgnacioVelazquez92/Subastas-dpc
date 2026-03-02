@@ -17,6 +17,7 @@ from app.models.domain import UIRow
 from app.core.alert_engine import AlertEngine
 from app.ui.formatters import DataFormatter
 from app.ui.table_manager import TableManager
+from app.utils.renglon_math import resolve_cantidad_equivalente
 
 
 class RowCalculator:
@@ -47,10 +48,12 @@ class RowCalculator:
     @staticmethod
     def calculate_costo_total_ars(
         cantidad: float,
-        costo_unit_ars: float
+        costo_unit_ars: float,
+        items_por_renglon: float | None = None,
     ) -> float | None:
         """Costo Total ARS = Cantidad × Costo Unit ARS."""
-        return RowCalculator.safe_mul(cantidad, costo_unit_ars)
+        cantidad_equivalente = resolve_cantidad_equivalente(cantidad, items_por_renglon)
+        return RowCalculator.safe_mul(cantidad_equivalente, costo_unit_ars)
     
     @staticmethod
     def calculate_precio_unit_aceptable(
@@ -68,10 +71,12 @@ class RowCalculator:
     @staticmethod
     def calculate_precio_total_aceptable(
         cantidad: float,
-        precio_unit_aceptable: float
+        precio_unit_aceptable: float,
+        items_por_renglon: float | None = None,
     ) -> float | None:
         """Precio Total Aceptable = Cantidad × Precio Unit Aceptable."""
-        return RowCalculator.safe_mul(cantidad, precio_unit_aceptable)
+        cantidad_equivalente = resolve_cantidad_equivalente(cantidad, items_por_renglon)
+        return RowCalculator.safe_mul(cantidad_equivalente, precio_unit_aceptable)
     
     @staticmethod
     def calculate_renta_referencia(
@@ -98,10 +103,12 @@ class RowCalculator:
     @staticmethod
     def calculate_precio_unit_mejora(
         oferta_para_mejorar: float,
-        cantidad: float
+        cantidad: float,
+        items_por_renglon: float | None = None,
     ) -> float | None:
         """Precio Unit Mejora = Oferta Para Mejorar / Cantidad."""
-        return RowCalculator.safe_div(oferta_para_mejorar, cantidad)
+        cantidad_equivalente = resolve_cantidad_equivalente(cantidad, items_por_renglon)
+        return RowCalculator.safe_div(oferta_para_mejorar, cantidad_equivalente)
     
     @staticmethod
     def calculate_renta_para_mejorar(
@@ -120,21 +127,23 @@ class RowCalculator:
         costo_unit_ars: float | None,
         costo_total_ars: float | None,
         cantidad: float | None,
+        items_por_renglon: float | None = None,
         prefer: str = "total",
     ) -> tuple[float | None, float | None]:
         """Normaliza costos unitario/total usando la cantidad disponible."""
-        if cantidad in (None, 0):
+        cantidad_equivalente = resolve_cantidad_equivalente(cantidad, items_por_renglon)
+        if cantidad_equivalente in (None, 0):
             return costo_unit_ars, costo_total_ars
 
         if costo_unit_ars is not None and costo_total_ars is not None:
             if prefer == "unit":
-                return float(costo_unit_ars), float(costo_unit_ars) * float(cantidad)
-            return float(costo_total_ars) / float(cantidad), float(costo_total_ars)
+                return float(costo_unit_ars), float(costo_unit_ars) * float(cantidad_equivalente)
+            return float(costo_total_ars) / float(cantidad_equivalente), float(costo_total_ars)
 
         if costo_unit_ars is not None:
-            return float(costo_unit_ars), float(costo_unit_ars) * float(cantidad)
+            return float(costo_unit_ars), float(costo_unit_ars) * float(cantidad_equivalente)
         if costo_total_ars is not None:
-            return float(costo_total_ars) / float(cantidad), float(costo_total_ars)
+            return float(costo_total_ars) / float(cantidad_equivalente), float(costo_total_ars)
         return None, None
 
 
@@ -214,7 +223,10 @@ class RowEditorDialog:
         
         ctk.CTkLabel(
             header,
-            text=f"ID: {self.row.id_renglon} • Qty: {self.row.cantidad or 'N/A'}",
+            text=(
+                f"ID: {self.row.id_renglon} • Qty: {self.row.cantidad or 'N/A'}"
+                f" • Items/renglón: {self.row.items_por_renglon or 1:g}"
+            ),
             font=ctk.CTkFont(size=10),
             text_color="#666666",
         ).pack(anchor="w", padx=20, pady=(0, 15))
@@ -582,6 +594,7 @@ class RowEditorDialog:
             costo_unit_ars=costo_unit_ars,
             costo_total_ars=costo_total_ars,
             cantidad=self.row.cantidad,
+            items_por_renglon=self.row.items_por_renglon,
             prefer=prefer_cost,
         )
         
@@ -725,20 +738,20 @@ class RowEditorDialog:
         """Recalcula e actualiza campos derivados en row."""
         # 🔥 Costo USD (UNITARIO y TOTAL)
         if conv_usd not in (None, 0):
-            if costo_unit_ars:
+            if costo_unit_ars is not None:
                 self.row.costo_unit_usd = costo_unit_ars / conv_usd
-            if costo_total_ars:
+            if costo_total_ars is not None:
                 self.row.costo_total_usd = costo_total_ars / conv_usd
         
         # Precio Unit Aceptable
         self.row.precio_unit_aceptable = self.calc.calculate_precio_unit_aceptable(
             renta_minima, costo_unit_ars
-        ) if renta_minima and costo_unit_ars else None
+        ) if renta_minima is not None and costo_unit_ars is not None else None
         
         # Precio Total Aceptable
         self.row.precio_total_aceptable = self.calc.calculate_precio_total_aceptable(
-            self.row.cantidad, self.row.precio_unit_aceptable
-        ) if self.row.cantidad and self.row.precio_unit_aceptable else None
+            self.row.cantidad, self.row.precio_unit_aceptable, self.row.items_por_renglon
+        ) if self.row.cantidad is not None and self.row.precio_unit_aceptable is not None else None
         
         # Renta Referencia: priorizar TOTAL vs TOTAL, fallback UNIT vs UNIT.
         if self.row.precio_referencia and costo_total_ars:
@@ -754,8 +767,8 @@ class RowEditorDialog:
         
         # Precio Unit Mejora
         self.row.precio_unit_mejora = self.calc.calculate_precio_unit_mejora(
-            self.row.oferta_para_mejorar, self.row.cantidad
-        ) if self.row.oferta_para_mejorar and self.row.cantidad else None
+            self.row.oferta_para_mejorar, self.row.cantidad, self.row.items_por_renglon
+        ) if self.row.oferta_para_mejorar is not None and self.row.cantidad is not None else None
         
         # Renta Para Mejorar
         self.row.renta_para_mejorar = self.calc.calculate_renta_para_mejorar(

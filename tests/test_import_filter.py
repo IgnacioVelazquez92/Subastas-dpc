@@ -27,6 +27,7 @@ def test_import_filters():
         "DESCRIPCION": "Test Item",
         "UNIDAD DE MEDIDA": "KG",
         "CANTIDAD": 100,
+        "ITEMS POR RENGLON": 5,
         "MARCA": "TestBrand",
         "OBS USUARIO": "Test obs",
         "CONVERSIÓN USD": 1500,
@@ -37,8 +38,8 @@ def test_import_filters():
         "RENTA MINIMA %": 1.5,
         "PRECIO UNIT ACEPTABLE": 11250000,  # CALC_FIELD
         "PRECIO TOTAL ACEPTABLE": 1125000000,  # CALC_FIELD
-        "PRECIO DE REFERENCIA": 1000000000,  # PLAYWRIGHT_FIELD
-        "PRECIO REF UNITARIO": 10000000,  # CALC_FIELD
+        "PRESUPUESTO OFICIAL": 1000000000,  # PLAYWRIGHT_FIELD
+        "PRECIO DE REFERENCIA": 50000000,  # CALC_FIELD
         "RENTA REFERENCIA %": 0.33,  # CALC_FIELD
         "MEJOR OFERTA ACTUAL": 950000000,  # PLAYWRIGHT_FIELD
         "OFERTA PARA MEJORAR": 900000000,  # PLAYWRIGHT_FIELD
@@ -63,11 +64,10 @@ def test_import_filters():
         imported_rows = import_excel_to_rows(file_path=test_file)
     except Exception as e:
         print(f"❌ Error importando: {e}")
-        return False
+        raise AssertionError(f"Error importando: {e}") from e
     
     if not imported_rows:
-        print("❌ No se importaron filas")
-        return False
+        raise AssertionError("No se importaron filas")
     
     row = imported_rows[0]
     print(f"\n📋 Campos en fila importada ({len(row)} campos):")
@@ -83,20 +83,17 @@ def test_import_filters():
     
     missing = required - actual
     if missing:
-        print(f"❌ Faltan campos requeridos: {missing}")
-        return False
+        raise AssertionError(f"Faltan campos requeridos: {missing}")
     
     # NO debe contener CALC_FIELDS (excepto ID/ITEM)
     bad_calc = actual & CALC_FIELDS
     if bad_calc:
-        print(f"❌ Contiene CALC_FIELDS (no debería): {bad_calc}")
-        return False
+        raise AssertionError(f"Contiene CALC_FIELDS (no debería): {bad_calc}")
     
     # NO debe contener PLAYWRIGHT_FIELDS (excepto ID/ITEM)
     bad_pw = (actual & PLAYWRIGHT_FIELDS) - {"ID SUBASTA", "ITEM"}
     if bad_pw:
-        print(f"❌ Contiene PLAYWRIGHT_FIELDS (no debería): {bad_pw}")
-        return False
+        raise AssertionError(f"Contiene PLAYWRIGHT_FIELDS (no debería): {bad_pw}")
     
     # Validar valores correctos
     print(f"\n📊 Validación de valores:")
@@ -117,14 +114,12 @@ def test_import_filters():
     print(f"\n🚫 CALC_FIELDS no deben estar presentes:")
     for calc_field in CALC_FIELDS:
         if calc_field in row:
-            print(f"  ✗ {calc_field} ESTÁ PRESENTE (no debería)")
-            return False
+            raise AssertionError(f"{calc_field} está presente y no debería")
         print(f"  ✓ {calc_field} ausente")
     
     print(f"\n✅ ÉXITO: Import solo contiene USER_FIELDS + identificadores")
-    return True
 
 if __name__ == "__main__":
     import sys
-    success = test_import_filters()
-    sys.exit(0 if success else 1)
+    test_import_filters()
+    sys.exit(0)

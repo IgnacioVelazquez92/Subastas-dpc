@@ -136,6 +136,7 @@ CREATE TABLE IF NOT EXISTS renglon_excel (
 
     unidad_medida           TEXT,
     cantidad                REAL,
+    items_por_renglon       REAL,
     marca                   TEXT,
 
     -- REFACTORED COLUMNS (nuevas)

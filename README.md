@@ -10,6 +10,7 @@ Proporciona una **interfaz visual moderna** como alternativa al portal oficial, 
 | Alertas configurables | Notificaciones visuales y sonoras ante cambios relevantes |
 | Gestión Excel | Importa costos, exporta resultados con columnas calculadas |
 | Histórico completo | Persiste todos los cambios y ofertas en SQLite |
+| Renglones compuestos | Contempla renglones con múltiples ítems usando `items_por_renglon` |
 | Filtros y ordenamiento | Vistas personalizadas, filtros rápidos, columnas configurables |
 | Modo testing | Escenarios JSON reproducibles para desarrollo sin portal real |
 
@@ -207,12 +208,31 @@ Cada fila representa un renglon de subasta con las siguientes columnas clave:
 | Columna | Descripción |
 |---|---|
 | Renglón | ID y descripción del ítem |
+| Items x Renglón | Cantidad de ítems/productos que componen el renglón |
 | Mejor Oferta | Precio líder actual del portal |
-| Mi Oferta | Precio propio registrado |
+| Presupuesto Oficial | Total oficial del renglón publicado por el portal |
+| Precio de Referencia | Valor unitario de referencia derivado correctamente |
 | Costo Unitario / Total | Importados desde Excel |
 | Renta a Mejorar % | Margen calculado respecto a la mejor oferta |
 | USD | Equivalente en dólares (cotización configurable) |
 | Seguimiento | Si el renglon está marcado para alertas |
+
+La columna `Items x Renglón` puede mostrarse desde la configuración de columnas para auditar rápido subastas donde un renglón agrupa varios productos.
+
+### Fórmula general de cálculo
+
+Cuando un renglón tiene más de un ítem, la fórmula base deja de ser `cantidad * precio_unitario = total` usando `cantidad` directa. La regla correcta es:
+
+```text
+cantidad_equivalente = cantidad / items_por_renglon
+
+PRESUPUESTO OFICIAL = PRECIO DE REFERENCIA * cantidad_equivalente
+PRECIO DE REFERENCIA = PRESUPUESTO OFICIAL / cantidad_equivalente
+PRECIO UNIT MEJORA = OFERTA PARA MEJORAR / cantidad_equivalente
+COSTO TOTAL ARS = COSTO UNIT ARS * cantidad_equivalente
+```
+
+Eso afecta todos los cálculos de unitarios y totales del sistema. `oferta_para_mejorar` sigue siendo el valor total del renglón, pero el dato útil para ofertar es `precio_unit_mejora`, calculado con la misma `cantidad_equivalente`.
 
 ### Filtros Rápidos
 
@@ -244,7 +264,7 @@ Cargar un Excel con columnas de costo unitario/total y observaciones. Los datos 
 
 ### Exportar resultados
 
-Genera un Excel con todos los renglones, sus precios capturados, costos y columnas calculadas (renta, totales, USD).
+Genera un Excel con todos los renglones, sus precios capturados, `ITEMS POR RENGLON`, costos y columnas calculadas (renta, totales, USD).
 
 ---
 

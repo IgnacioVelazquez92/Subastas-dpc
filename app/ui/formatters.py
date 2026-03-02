@@ -143,6 +143,7 @@ class DisplayValues:
             row.id_renglon,
             row.desc or "",
             fmt.format_number(row.cantidad, decimals=2),
+            fmt.format_number(row.items_por_renglon, decimals=0),
             # Metadata usuario
             row.unidad_medida or "",
             row.marca or "",

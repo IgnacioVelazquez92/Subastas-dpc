@@ -156,7 +156,12 @@ class EventProcessor:
             if not rid:
                 continue
             desc = str(item.get("text") or "")
-            self.rows_cache[rid] = UIRow(id_renglon=rid, desc=desc)
+            self.rows_cache[rid] = UIRow(
+                id_renglon=rid,
+                desc=desc,
+                cantidad=item.get("cantidad"),
+                items_por_renglon=item.get("items_por_renglon"),
+            )
     
     def _handle_update(self, ev: Event) -> None:
         """Maneja evento UPDATE: crea o actualiza una fila."""
@@ -235,6 +240,7 @@ class EventProcessor:
             row.desc,
             row.unidad_medida,
             row.cantidad,
+            row.items_por_renglon,
             row.marca,
             row.obs_usuario,
             row.conv_usd,
@@ -288,6 +294,7 @@ class EventProcessor:
         # Datos técnicos (REFACTORED)
         row.unidad_medida = payload.get("unidad_medida")
         row.cantidad = payload.get("cantidad")
+        row.items_por_renglon = payload.get("items_por_renglon")
         row.marca = payload.get("marca")
         row.obs_usuario = payload.get("obs_usuario")
         row.conv_usd = payload.get("conv_usd")

@@ -26,6 +26,7 @@ from app.core.events import Event, EventType, info, warn
 from app.core.alert_engine import AlertEngine, AlertDecision
 from app.core.security import SecurityPolicy, SecurityAction
 from app.db.database import Database
+from app.utils.renglon_math import normalize_items_por_renglon, resolve_cantidad_equivalente
 from app.utils.time import now_iso
 
 
@@ -133,15 +134,17 @@ class Engine:
         self,
         *,
         cantidad: float | None,
+        items_por_renglon: float | None,
         precio_referencia: float | None,
         presupuesto: float | None,
     ) -> float | None:
         """
         Regla unificada para referencia por unidad:
-        - Si hay presupuesto oficial y cantidad: usar presupuesto/cantidad.
+        - Si hay presupuesto oficial y cantidad equivalente: usar presupuesto/cantidad_equivalente.
         - Si no, fallback al precio de referencia recibido.
         """
-        unit_from_presupuesto = self._safe_div(presupuesto, cantidad)
+        cantidad_equivalente = resolve_cantidad_equivalente(cantidad, items_por_renglon)
+        unit_from_presupuesto = self._safe_div(presupuesto, cantidad_equivalente)
         if unit_from_presupuesto is not None:
             return unit_from_presupuesto
         if precio_referencia is None:
@@ -157,6 +160,7 @@ class Engine:
         costo_unit_ars: float | None,
         costo_total_ars: float | None,
         cantidad: float | None,
+        items_por_renglon: float | None = None,
         should_log: bool = False,
     ) -> tuple[float | None, float | None]:
         """
@@ -173,14 +177,16 @@ class Engine:
         """
         if should_log:
             print(f"\n[CALC] _resolve_costo_final:")
-            print(f"  INPUT: unit_ars={costo_unit_ars}, total_ars={costo_total_ars}, cant={cantidad}")
+            print(f"  INPUT: unit_ars={costo_unit_ars}, total_ars={costo_total_ars}, cant={cantidad}, items={items_por_renglon}")
+
+        cantidad_equivalente = resolve_cantidad_equivalente(cantidad, items_por_renglon)
         
         # Si ambos están presentes: priorizar TOTAL
         if costo_total_ars is not None and costo_unit_ars is not None:
             # Recalcular unitario desde total (si cantidad existe)
-            if cantidad not in (None, 0):
+            if cantidad_equivalente not in (None, 0):
                 try:
-                    unit = float(costo_total_ars) / float(cantidad)
+                    unit = float(costo_total_ars) / float(cantidad_equivalente)
                     if should_log:
                         print(f"  AMBOS PRESENTES -> Priorizar TOTAL: unit={unit:.2f}, total={costo_total_ars:.2f}")
                     return (unit, float(costo_total_ars))
@@ -194,14 +200,14 @@ class Engine:
         
         # Si solo TOTAL: calcular UNITARIO
         if costo_total_ars is not None and costo_unit_ars is None:
-            unit = self._safe_div(costo_total_ars, cantidad)
+            unit = self._safe_div(costo_total_ars, cantidad_equivalente)
             if should_log:
                 print(f"  SOLO TOTAL -> Calcular unit: unit={unit}, total={costo_total_ars:.2f}")
             return (unit, float(costo_total_ars) if costo_total_ars is not None else None)
         
         # Si solo UNITARIO: calcular TOTAL
         if costo_unit_ars is not None and costo_total_ars is None:
-            total = self._safe_mul(costo_unit_ars, cantidad)
+            total = self._safe_mul(costo_unit_ars, cantidad_equivalente)
             if should_log:
                 print(f"  SOLO UNIT -> Calcular total: unit={costo_unit_ars:.2f}, total={total}")
             return (float(costo_unit_ars) if costo_unit_ars is not None else None, total)
@@ -284,8 +290,9 @@ class Engine:
 
             # Si la subasta trae cantidad/precio_ref, los guardamos como "del sistema"
             cantidad = r.get("cantidad")
+            items_por_renglon = normalize_items_por_renglon(r.get("items_por_renglon"))
             precio_ref_total = r.get("precio_referencia")  # TOTAL (Presupuesto Oficial)
-            precio_ref_unit = r.get("precio_ref_unitario")  # UNITARIO (Precio de referencia)
+            precio_ref_unit = r.get("precio_ref_unitario")  # UNITARIO (Precio de referencia del portal)
             presupuesto_ref = r.get("presupuesto")
 
             # Fallback de compatibilidad: si no vino TOTAL en el campo principal, usar presupuesto.
@@ -296,6 +303,7 @@ class Engine:
             # priorizar presupuesto/cantidad y dejar precio_referencia como fallback.
             precio_ref_unit = self._resolve_precio_ref_unitario(
                 cantidad=cantidad,
+                items_por_renglon=items_por_renglon,
                 precio_referencia=precio_ref_unit,
                 presupuesto=precio_ref_total,
             )
@@ -311,6 +319,7 @@ class Engine:
                     renglon_id=pk,
                     unidad_medida=existing.get("unidad_medida"),
                     cantidad=existing.get("cantidad") if cantidad is None else cantidad,
+                    items_por_renglon=items_por_renglon,
                     marca=existing.get("marca"),
                     # REFACTORED columns
                     obs_usuario=existing.get("obs_usuario"),
@@ -440,6 +449,7 @@ class Engine:
 
         unidad_medida = None
         cantidad = None
+        items_por_renglon = None
         marca = None
         obs_usuario = None
         conv_usd = None
@@ -449,7 +459,7 @@ class Engine:
         costo_total_ars = None
         renta_minima = None
         precio_referencia = None  # TOTAL de subasta
-        precio_ref_unitario = None  # Calculado: precio_referencia / cantidad
+        precio_ref_unitario = None  # Precio de referencia del portal
         renta_referencia = None
         precio_unit_aceptable = None
         precio_total_aceptable = None
@@ -462,6 +472,7 @@ class Engine:
         if excel:
             unidad_medida = excel.get("unidad_medida")
             cantidad = excel.get("cantidad")
+            items_por_renglon = excel.get("items_por_renglon")
             marca = excel.get("marca")
             obs_usuario = excel.get("obs_usuario")
             # 🔥 Leer de columna NUEVA primero, fallback a LEGACY
@@ -497,6 +508,7 @@ class Engine:
             costo_unit_ars=costo_unit_ars,
             costo_total_ars=costo_total_ars,
             cantidad=cantidad,
+            items_por_renglon=items_por_renglon,
             should_log=should_log,
         )
         
@@ -529,6 +541,7 @@ class Engine:
                     renglon_id=renglon_pk,
                     unidad_medida=existing.get("unidad_medida"),
                     cantidad=existing.get("cantidad"),
+                    items_por_renglon=existing.get("items_por_renglon"),
                     marca=existing.get("marca"),
                     obs_usuario=existing.get("obs_usuario"),
                     conv_usd=conv_usd,  # Guardar en columna NUEVA
@@ -568,10 +581,10 @@ class Engine:
         if should_log:
             print(f"\n[CALC] Precio referencia unitario:")
         if precio_ref_unitario is None and precio_referencia is not None:
-            # precio_referencia es TOTAL, dividir por cantidad para obtener UNITARIO
-            precio_ref_unitario = self._safe_div(precio_referencia, cantidad)
+            cantidad_equivalente = resolve_cantidad_equivalente(cantidad, items_por_renglon)
+            precio_ref_unitario = self._safe_div(precio_referencia, cantidad_equivalente)
             if should_log:
-                print(f"  precio_ref_unitario (derivado) = {precio_referencia} / {cantidad} = {precio_ref_unitario}")
+                print(f"  precio_ref_unitario (derivado) = {precio_referencia} / {cantidad_equivalente} = {precio_ref_unitario}")
         elif should_log:
             if precio_ref_unitario is not None:
                 print(f"  precio_ref_unitario (existente) = {precio_ref_unitario}")
@@ -596,9 +609,10 @@ class Engine:
         # Precio unitario para mejorar (si no está en la BD)
         if should_log:
             print(f"\n[CALC] Precio para mejorar:")
-        precio_unit_mejora = self._safe_div(oferta_min_val, cantidad)
+        cantidad_equivalente = resolve_cantidad_equivalente(cantidad, items_por_renglon)
+        precio_unit_mejora = self._safe_div(oferta_min_val, cantidad_equivalente)
         if should_log:
-            print(f"  precio_unit_mejora = {oferta_min_val} / {cantidad} = {precio_unit_mejora}")
+            print(f"  precio_unit_mejora = {oferta_min_val} / {cantidad_equivalente} = {precio_unit_mejora}")
 
         # Rentabilidad para mejorar (basada en precio unitario para mejorar)
         if should_log:
@@ -751,6 +765,7 @@ class Engine:
             renglon_id=renglon_pk,
             unidad_medida=unidad_medida,
             cantidad=cantidad,
+            items_por_renglon=items_por_renglon,
             marca=marca,
             obs_usuario=obs_usuario,
             conv_usd=conv_usd,
@@ -789,6 +804,7 @@ class Engine:
                     "costo_subtotal": costo_subtotal,
                     "unidad_medida": unidad_medida,
                     "cantidad": cantidad,
+                    "items_por_renglon": items_por_renglon,
                     "marca": marca,
                     "obs_usuario": obs_usuario,
                     "conv_usd": conv_usd,

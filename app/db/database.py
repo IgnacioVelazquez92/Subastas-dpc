@@ -79,7 +79,7 @@ class Database:
         
         # REFACTORING: Add new columns if they don't exist
         new_columns = [
-            "obs_usuario", "conv_usd", "costo_unit_usd", "costo_total_usd",
+            "items_por_renglon", "obs_usuario", "conv_usd", "costo_unit_usd", "costo_total_usd",
             "costo_unit_ars", "costo_total_ars", "renta_minima",
             "precio_ref_unitario", "renta_referencia", "precio_unit_aceptable",
             "precio_total_aceptable", "precio_unit_mejora", "renta_para_mejorar",
@@ -297,6 +297,7 @@ class Database:
                 r.descripcion AS descripcion,
                 e.unidad_medida AS unidad_medida,
                 e.cantidad AS cantidad,
+                e.items_por_renglon AS items_por_renglon,
                 e.marca AS marca,
                 e.obs_usuario AS obs_usuario,
                 e.conv_usd AS conv_usd,
@@ -333,6 +334,7 @@ class Database:
                     "DESCRIPCION": row["descripcion"],
                     "UNIDAD DE MEDIDA": row["unidad_medida"],
                     "CANTIDAD": row["cantidad"],
+                    "ITEMS POR RENGLON": row["items_por_renglon"],
                     "MARCA": row["marca"],
                     "OBS USUARIO": row["obs_usuario"],
                     "CONVERSIÓN USD": row["conv_usd"],
@@ -349,8 +351,8 @@ class Database:
                     ),
                     "PRECIO UNIT ACEPTABLE": row["precio_unit_aceptable"],
                     "PRECIO TOTAL ACEPTABLE": row["precio_total_aceptable"],
-                    "PRECIO DE REFERENCIA": row["precio_referencia"],
-                    "PRECIO REF UNITARIO": row["precio_ref_unitario"],
+                    "PRESUPUESTO OFICIAL": row["precio_referencia"],
+                    "PRECIO DE REFERENCIA": row["precio_ref_unitario"],
                     "RENTA REFERENCIA %": row["renta_referencia"],
                     "MEJOR OFERTA ACTUAL": row["mejor_oferta_txt"],
                     "OFERTA PARA MEJORAR": row["oferta_para_mejorar"],
@@ -436,6 +438,7 @@ class Database:
             """
             SELECT
                 unidad_medida, cantidad, marca,
+                items_por_renglon,
                 obs_usuario, conv_usd, costo_unit_usd, costo_total_usd,
                 costo_unit_ars, costo_total_ars, renta_minima,
                 precio_referencia, precio_ref_unitario, renta_referencia,
@@ -456,6 +459,7 @@ class Database:
             # REFACTORED columns (preferred)
             "unidad_medida": row["unidad_medida"],
             "cantidad": row["cantidad"],
+            "items_por_renglon": row["items_por_renglon"],
             "marca": row["marca"],
             "obs_usuario": row["obs_usuario"],
             "conv_usd": row["conv_usd"],
@@ -489,6 +493,7 @@ class Database:
         renglon_id: int,
         unidad_medida: str | None = None,
         cantidad: float | None = None,
+        items_por_renglon: float | None = None,
         marca: str | None = None,
         # REFACTORED columns (preferred)
         obs_usuario: str | None = None,
@@ -526,7 +531,7 @@ class Database:
         
         # Update payload with all columns
         payload = (
-            unidad_medida, cantidad, marca,
+            unidad_medida, cantidad, items_por_renglon, marca,
             obs_usuario, conv_usd, costo_unit_usd, costo_total_usd,
             costo_unit_ars, costo_total_ars, renta_minima,
             precio_referencia, precio_ref_unitario, renta_referencia,
@@ -542,7 +547,7 @@ class Database:
             self.execute(
                 """
                 UPDATE renglon_excel
-                SET unidad_medida = ?, cantidad = ?, marca = ?,
+                SET unidad_medida = ?, cantidad = ?, items_por_renglon = ?, marca = ?,
                     obs_usuario = ?, conv_usd = ?, costo_unit_usd = ?, costo_total_usd = ?,
                     costo_unit_ars = ?, costo_total_ars = ?, renta_minima = ?,
                     precio_referencia = ?, precio_ref_unitario = ?, renta_referencia = ?,
@@ -560,7 +565,7 @@ class Database:
             self.execute(
                 """
                 INSERT INTO renglon_excel (
-                    unidad_medida, cantidad, marca,
+                    unidad_medida, cantidad, items_por_renglon, marca,
                     obs_usuario, conv_usd, costo_unit_usd, costo_total_usd,
                     costo_unit_ars, costo_total_ars, renta_minima,
                     precio_referencia, precio_ref_unitario, renta_referencia,
@@ -570,7 +575,7 @@ class Database:
                     observaciones, conversion_usd, costo_usd, costo_final_pesos,
                     renta, precio_referencia_subasta,
                     updated_at, renglon_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 payload,
             )

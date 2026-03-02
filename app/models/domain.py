@@ -164,6 +164,7 @@ class UIRow:
     # Datos técnicos del renglón
     unidad_medida: Optional[str] = None
     cantidad: Optional[float] = None
+    items_por_renglon: Optional[float] = None
     marca: Optional[str] = None
     obs_usuario: Optional[str] = None
     

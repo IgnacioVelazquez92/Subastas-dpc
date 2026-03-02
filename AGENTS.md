@@ -41,8 +41,9 @@ RenglonEstado (lectura actual del portal)
   ├── mejor_oferta    → Precio líder actual
   ├── mi_oferta       → Mi precio actual
   ├── cantidad        → Cantidad licitada
+  ├── items_por_renglon → Cantidad de ítems/productos que componen el renglón
   ├── costo_unitario  → Importado desde Excel
-  ├── costo_total     → Calculado: costo_unitario * cantidad
+  ├── costo_total     → Calculado: costo_unitario * (cantidad / items_por_renglon)
   ├── renta_para_mejorar → Calculado: ((mi_oferta / costo_total) - 1) * 100
   └── seguimiento     → bool: si tiene alertas activas
 ```
@@ -143,6 +144,26 @@ texto = float_to_money_txt(1234.56)    # → "$ 1.234,56"
 ### Porcentajes / Renta
 
 El cálculo de `renta_para_mejorar` está centralizado. Ver `docs/GUIA_FORMATO_RENTA.md` y `docs/VERIFICACION_CALCULOS.md` antes de modificar cualquier fórmula de negocio.
+
+### Fórmula general para renglones compuestos
+
+Cuando un renglón representa más de un producto/servicio, `cantidad` sola no alcanza para derivar unitarios.
+
+Regla vigente:
+
+```text
+cantidad_equivalente = cantidad / items_por_renglon
+
+precio_de_referencia = presupuesto_oficial / cantidad_equivalente
+precio_unit_mejora   = oferta_para_mejorar / cantidad_equivalente
+costo_total_ars      = costo_unit_ars * cantidad_equivalente
+costo_unit_ars       = costo_total_ars / cantidad_equivalente
+```
+
+Notas:
+- `precio_referencia` en BD/UI representa **PRESUPUESTO OFICIAL** (total del renglón).
+- `precio_ref_unitario` en BD/UI representa **PRECIO DE REFERENCIA** (unitario del portal).
+- `items_por_renglon` debe persistirse y propagarse hasta la UI; no recalcularlo en capas posteriores si ya vino del collector.
 
 ### Base de datos
 
@@ -352,6 +373,9 @@ Ver `docs/` para el historial completo:
 - Comandos `set_poll_seconds` / `set_intensive_monitoring` propagan al `HttpMonitor` cuando está activo
 - Nuevo método público: `collector.set_http_monitor_mode(True/False)` para cambiar en caliente
 - `httpx[http2]>=0.27` agregado a `requirements.txt`
+- Soporte para `items_por_renglon` en capture, persistencia y UI
+- Cálculos unitarios/totales adaptados a renglones con múltiples ítems
+- Renombre UI: `precio_referencia` → `PRESUPUESTO OFICIAL`, `precio_ref_unitario` → `PRECIO DE REFERENCIA`
 
 **Pendiente / mejoras posibles:**
 - Validar en portal real que las cookies solas son suficientes (sin CSRF extra)

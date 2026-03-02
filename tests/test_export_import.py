@@ -1,91 +1,73 @@
-#!/usr/bin/env python3
-"""
-Test export/import coherence:
-1. Exporta datos desde la BD actual
-2. Importa el archivo exportado
-3. Verifica que solo los USER_FIELDS fueron importados
-4. Verifica que CALC_FIELDS y PLAYWRIGHT_FIELDS no fueron sobrescritos
-"""
-import sys
-import sqlite3
-from app.excel.excel_io import export_subasta_to_excel, import_excel_to_rows, USER_FIELDS, CALC_FIELDS, PLAYWRIGHT_FIELDS
-from app.db.database import Database
+from __future__ import annotations
 
-def test_export_import():
-    # Conectar a BD
-    db = Database(db_path="data/subastas.db")
-    
-    # Obtener último subasta_id
-    subasta_id = db.get_latest_subasta_id()
-    if not subasta_id:
-        print("❌ No hay subastas en la BD")
-        return False
-    
-    print(f"✅ Usando subasta_id={subasta_id}")
-    
-    # Exportar
-    export_path = "/tmp/test_export.xlsx"
-    try:
-        rows = db.fetch_export_rows(subasta_id=subasta_id)
-        export_subasta_to_excel(rows=rows, out_path=export_path)
-        print(f"✅ Exportado a {export_path} ({len(rows)} renglones)")
-    except Exception as e:
-        print(f"❌ Error exportando: {e}")
-        return False
-    
-    # Importar
-    try:
-        imported_rows = import_excel_to_rows(file_path=export_path)
-        print(f"✅ Importado {len(imported_rows)} renglones")
-    except Exception as e:
-        print(f"❌ Error importando: {e}")
-        return False
-    
-    # Validar coherencia
-    if not imported_rows:
-        print("⚠️  No hay filas importadas")
-        return True
-    
+from pathlib import Path
+
+from app.db.database import Database
+from app.excel.excel_io import (
+    CALC_FIELDS,
+    PLAYWRIGHT_FIELDS,
+    USER_FIELDS,
+    export_subasta_to_excel,
+    import_excel_to_rows,
+)
+
+
+def test_export_import(tmp_path):
+    db_path = tmp_path / "test_monitor.db"
+    export_path = tmp_path / "test_export.xlsx"
+    schema_path = Path(__file__).resolve().parents[1] / "app" / "db" / "schema.sql"
+
+    db = Database(db_path=db_path)
+    db.init_schema(schema_path)
+
+    subasta_id = db.upsert_subasta(id_cot="123456", url="https://example.invalid/subasta")
+    renglon_id = db.upsert_renglon(
+        subasta_id=subasta_id,
+        id_renglon="1",
+        descripcion="Test Item",
+        margen_minimo="0,0050",
+    )
+    db.upsert_renglon_excel(
+        renglon_id=renglon_id,
+        unidad_medida="KG",
+        cantidad=100.0,
+        items_por_renglon=5.0,
+        marca="TestBrand",
+        obs_usuario="Test obs",
+        conv_usd=1500.0,
+        costo_unit_ars=7500000.0,
+        costo_total_ars=750000000.0,
+        renta_minima=0.30,
+        precio_referencia=1000000000.0,
+        precio_ref_unitario=50000000.0,
+        renta_referencia=0.33,
+        precio_unit_aceptable=9750000.0,
+        precio_total_aceptable=975000000.0,
+        oferta_para_mejorar=900000000.0,
+        precio_unit_mejora=45000000.0,
+        renta_para_mejorar=0.20,
+        obs_cambio="Cambio de prueba",
+    )
+
+    rows = db.fetch_export_rows(subasta_id=subasta_id)
+    assert len(rows) == 1
+
+    export_subasta_to_excel(rows=rows, out_path=str(export_path))
+    imported_rows = import_excel_to_rows(file_path=str(export_path))
+
+    assert len(imported_rows) == 1
     sample = imported_rows[0]
-    print(f"\n📋 Sample de fila importada:")
-    for key in sorted(sample.keys()):
-        val = sample[key]
-        if isinstance(val, (int, float)):
-            val = f"{val:,.2f}" if isinstance(val, float) else str(val)
-        print(f"  {key}: {val}")
-    
-    # Validar que NO contiene CALC_FIELDS ni PLAYWRIGHT_FIELDS (excepto ID/ITEM)
-    print(f"\n✅ Validación:")
+
     required_only = {"ID SUBASTA", "ITEM"}
-    
     invalid_fields = []
     for key in sample.keys():
         if key in CALC_FIELDS - required_only:
-            invalid_fields.append(f"{key} (CALC_FIELD - NO debería estar)")
+            invalid_fields.append(key)
         elif key in PLAYWRIGHT_FIELDS - required_only:
-            invalid_fields.append(f"{key} (PLAYWRIGHT_FIELD - NO debería estar)")
-    
-    if invalid_fields:
-        print(f"❌ Campos que NO deberían importarse:")
-        for field in invalid_fields:
-            print(f"   - {field}")
-        return False
-    
+            invalid_fields.append(key)
+
+    assert not invalid_fields
+
     valid_fields = set(sample.keys())
     expected_fields = {"ID SUBASTA", "ITEM"} | USER_FIELDS
-    missing = expected_fields - valid_fields
-    
-    if missing:
-        print(f"⚠️  Campos USER faltantes: {missing}")
-    
-    extra = valid_fields - expected_fields
-    if extra:
-        print(f"⚠️  Campos extra: {extra}")
-    
-    print(f"✅ Todos los campos importados son válidos (solo USER_FIELDS)")
-    
-    return True
-
-if __name__ == "__main__":
-    success = test_export_import()
-    sys.exit(0 if success else 1)
+    assert expected_fields.issubset(valid_fields)

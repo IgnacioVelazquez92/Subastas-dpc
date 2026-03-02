@@ -372,7 +372,7 @@ class App(ctk.CTk):
 
         # Cargar columnas guardadas (REFACTORED: usar nombres nuevos)
         default_cols = [
-            "led", "id_subasta", "item", "desc", "unidad_medida", "cantidad", "marca",
+            "led", "id_subasta", "item", "desc", "unidad_medida", "cantidad", "items_por_renglon", "marca",
             "obs_usuario", "conv_usd", "costo_unit_usd", "costo_total_usd",
             "costo_unit_ars", "costo_total_ars", "renta_minima",
             "precio_unit_aceptable", "precio_total_aceptable",
@@ -744,6 +744,7 @@ class App(ctk.CTk):
             if excel:
                 row.unidad_medida = excel.get("unidad_medida")
                 row.cantidad = excel.get("cantidad")
+                row.items_por_renglon = excel.get("items_por_renglon")
                 row.marca = excel.get("marca")
                 row.obs_usuario = excel.get("obs_usuario")
                 row.conv_usd = excel.get("conv_usd")
