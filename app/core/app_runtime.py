@@ -71,6 +71,8 @@ class AppRuntime:
         poll_seconds: float = 1.0,
         autostart_collector: bool = True,
         scenario_path: Optional[str] = None,
+        use_http_monitor: bool = False,
+        http_concurrent_requests: int = 5,
     ):
         self.db = db
         self.mode: Mode = mode
@@ -79,6 +81,9 @@ class AppRuntime:
         self.poll_seconds = float(self.base_poll_seconds)
         self.scenario_path = scenario_path
         self.autostart_collector = bool(autostart_collector)
+        # HttpMonitor: monitoreo directo con httpx sin Chromium (solo modo PLAYWRIGHT)
+        self.use_http_monitor = bool(use_http_monitor)
+        self.http_concurrent_requests = max(1, min(30, int(http_concurrent_requests)))
 
         # Colas
         self.collector_cmd_q: Queue = Queue()
@@ -111,6 +116,8 @@ class AppRuntime:
                 out_q=self.collector_out_q,
                 headless=self.headless,
                 poll_seconds=self.poll_seconds,
+                use_http_monitor=self.use_http_monitor,
+                http_concurrent_requests=self.http_concurrent_requests,
             )
 
         # MOCK: SimulatorV2 con escenarios JSON (sin datos hardcodeados)
@@ -385,6 +392,21 @@ class AppRuntime:
             self.engine_out_q.put(info(EventType.STOP, "Collector pausado"))
         except Exception as e:
             self.engine_out_q.put(info(EventType.EXCEPTION, f"No se pudo pausar collector: {e}"))
+
+    def set_http_monitor_mode(self, enabled: bool) -> None:
+        """
+        Activa o desactiva HttpMonitor en caliente.
+        - ON:  httpx directo sin Chromium (rápido, 0.2-2s por ciclo).
+        - OFF: Playwright Chromium clásico (fallback estable).
+        Efecto en el PRÓXIMO capture_current.
+        """
+        try:
+            if hasattr(self.collector, "set_http_monitor_mode"):
+                self.collector.set_http_monitor_mode(bool(enabled))
+                self.use_http_monitor = bool(enabled)
+        except Exception as e:
+            self.engine_out_q.put(info(EventType.EXCEPTION,
+                f"No se pudo cambiar modo HTTP monitor: {e}"))
 
     def set_intensive_monitoring(self, enabled: bool) -> None:
         """

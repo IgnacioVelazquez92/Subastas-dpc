@@ -7,6 +7,7 @@ Responsabilidad única: Convertir eventos del motor en cambios de estado de tabl
 
 from __future__ import annotations
 
+import os
 from datetime import datetime, timedelta
 from app.core.events import Event, EventType
 from app.core.alert_engine import RowStyle, SoundCue
@@ -40,6 +41,13 @@ class EventProcessor:
         self.set_status = status_label_setter
         self.log = logger
         self.bell = audio_bell_fn
+        # Audio habilitado por defecto; se puede desactivar con MONITOR_ENABLE_SOUND=0
+        self.sound_enabled = str(os.getenv("MONITOR_ENABLE_SOUND", "1")).strip().lower() in {
+            "1", "true", "yes", "on"
+        }
+        self._outbid_blink_tokens: dict[str, int] = {}
+        self._outbid_blink_jobs: dict[str, list[str]] = {}
+        self._outbid_blink_seq = 0
         
         # Callbacks para LEDs (se asignan después en app.py)
         self.on_offer_changed = None  # Callback para LED de ofertas
@@ -159,6 +167,7 @@ class EventProcessor:
             return
         
         rid = str(rid)
+        self._cancel_outbid_blink(rid)
         
         # Obtener o crear fila
         row = self.rows_cache.get(rid)
@@ -217,6 +226,8 @@ class EventProcessor:
             # Renderizar
             row_values = DisplayValues.build_row_values(row)
             self.table_mgr.render_row(rid, row_values, style)
+            if bool(payload.get("outbid", False)):
+                self._start_outbid_blink(rid=rid, row_values=row_values, final_style=style)
 
     def _row_render_signature(self, row: UIRow) -> tuple:
         """Firma compacta de campos visibles para detectar cambios de render."""
@@ -317,15 +328,16 @@ class EventProcessor:
 
         # OUTBID → sonido WAV de alerta + log específico
         if outbid:
-            try:
-                play_outbid_alert()
-            except Exception:
-                pass
-            # Fallback explícito: asegurar señal audible aunque falle el backend de audio.
-            try:
-                self.bell()
-            except Exception:
-                pass
+            if self.sound_enabled:
+                try:
+                    play_outbid_alert()
+                except Exception:
+                    pass
+                # Fallback explícito: asegurar señal audible aunque falle el backend de audio.
+                try:
+                    self.bell()
+                except Exception:
+                    pass
             self.log(
                 f"🔔 [{row.id_renglon}] ¡OFERTA SUPERADA! "
                 f"(nuevo proveedor: {payload.get('mejor_id_proveedor', '?')})"
@@ -333,13 +345,62 @@ class EventProcessor:
             return style
 
         # Reproducir sonido genérico si corresponde
-        if sound != SoundCue.NONE.value and highlight:
+        if self.sound_enabled and sound != SoundCue.NONE.value and highlight:
             try:
                 self.bell()
             except Exception:
                 pass
 
         return style
+
+    def _cancel_outbid_blink(self, rid: str) -> None:
+        jobs = self._outbid_blink_jobs.pop(rid, [])
+        for job_id in jobs:
+            try:
+                self.table_mgr.tree.after_cancel(job_id)
+            except Exception:
+                pass
+        self._outbid_blink_tokens.pop(rid, None)
+
+    def _start_outbid_blink(self, *, rid: str, row_values: tuple[str, ...], final_style: str) -> None:
+        """
+        Parpadeo visual para OUTBID:
+        alterna naranja/estilo-final y termina SIEMPRE en estilo-final.
+        """
+        self._cancel_outbid_blink(rid)
+        self._outbid_blink_seq += 1
+        token = self._outbid_blink_seq
+        self._outbid_blink_tokens[rid] = token
+        self._outbid_blink_jobs[rid] = []
+
+        sequence = [
+            RowStyle.OUTBID.value,
+            final_style,
+            RowStyle.OUTBID.value,
+            final_style,
+        ]
+        step_ms = 220
+
+        last_idx = len(sequence) - 1
+        for idx, style in enumerate(sequence):
+            delay_ms = idx * step_ms
+
+            def _apply_style(s=style, t=token, is_last=(idx == last_idx)):
+                if self._outbid_blink_tokens.get(rid) != t:
+                    return
+                self.table_mgr.render_row(rid, row_values, s)
+                if is_last:
+                    self._outbid_blink_tokens.pop(rid, None)
+                    self._outbid_blink_jobs.pop(rid, None)
+
+            if delay_ms == 0:
+                _apply_style()
+            else:
+                try:
+                    job = self.table_mgr.tree.after(delay_ms, _apply_style)
+                    self._outbid_blink_jobs[rid].append(job)
+                except Exception:
+                    pass
 
     @staticmethod
     def _compute_offer_delta_txt(*, playwright_time: str, local_dt: datetime) -> str:

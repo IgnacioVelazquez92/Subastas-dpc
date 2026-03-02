@@ -76,6 +76,7 @@ class App(ctk.CTk):
         self.filter_search_text = tk.StringVar(value="")
         self.filter_search_text.trace_add("write", lambda *_: self._on_filter_changed())
         self.intensive_monitoring = tk.BooleanVar(value=True)
+        self.http_monitor_mode = tk.BooleanVar(value=False)
         self._row_led_timers: dict[str, str] = {}
         # Treeview no siempre renderiza bien emojis de color; usar glifos robustos.
         self._row_led_default = "○"
@@ -175,6 +176,13 @@ class App(ctk.CTk):
             text="Supervisión intensiva",
             variable=self.intensive_monitoring,
             command=self._on_toggle_intensive_monitoring,
+        ).pack(side="left", padx=8)
+
+        ctk.CTkSwitch(
+            control_frame,
+            text="⚡ HTTP Monitor",
+            variable=self.http_monitor_mode,
+            command=self._on_toggle_http_monitor,
         ).pack(side="left", padx=8)
 
         self.lbl_monitor_mode_hint = ctk.CTkLabel(
@@ -701,6 +709,21 @@ class App(ctk.CTk):
         if self.logger:
             mode_txt = "INTENSIVA" if enabled else "SUEÑO"
             self.logger.log(f"Modo de supervisión: {mode_txt}")
+
+    def _on_toggle_http_monitor(self) -> None:
+        """Activa/desactiva HttpMonitor (httpx directo) en caliente."""
+        enabled = bool(self.http_monitor_mode.get())
+        self.handles.runtime.set_http_monitor_mode(enabled=enabled)
+        if self.logger:
+            if enabled:
+                self.logger.log(
+                    "⚡ HTTP Monitor ACTIVADO — próximo 'Capturar actual' usará httpx directo "
+                    "(latencia 0.2–2s). Playwright queda abierto para navegación."
+                )
+            else:
+                self.logger.log(
+                    "HTTP Monitor desactivado — próximo 'Capturar actual' usará Playwright (Chromium)."
+                )
 
     def on_refresh_ui(self) -> None:
         """Refresca la UI leyendo datos actuales desde la BD."""

@@ -150,10 +150,11 @@ class AlertEngine:
                 message="✅ Mejor oferta: es la tuya",
             )
 
-        # 3c) Oferta marcada manualmente como mía => SUCCESS clásico
+        # 3c) Oferta marcada manualmente como mía:
+        # mantener color propio consistente para distinguirla de estilos por utilidad.
         if oferta_mia:
             return AlertDecision(
-                style=RowStyle.SUCCESS,
+                style=RowStyle.MY_OFFER,
                 play_sound=SoundCue.SUCCESS if (changed and tracked) else SoundCue.NONE,
                 highlight=bool(changed and tracked),
                 hide=False,

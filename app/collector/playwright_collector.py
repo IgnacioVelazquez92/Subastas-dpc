@@ -50,6 +50,7 @@ from app.utils.money import money_to_float
 # -------------------------
 
 LISTADO_URL = "https://webecommerce.cba.gov.ar/VistaPublica/OportunidadProveedores.aspx"
+BASE_DOMAIN = "webecommerce.cba.gov.ar"
 
 # La subasta pública suele estar en esta ruta con query tokenizada
 SUBASTA_URL_PART = "SubastaVivoAccesoPublico.aspx"
@@ -75,6 +76,8 @@ class PlaywrightCollector(BaseCollector):
         out_q: Queue,
         headless: bool = False,
         poll_seconds: float = 1.0,
+        use_http_monitor: bool = False,
+        http_concurrent_requests: int = 5,
     ):
         super().__init__(out_q=out_q)
         self.cmd_q = cmd_q
@@ -82,6 +85,10 @@ class PlaywrightCollector(BaseCollector):
         self.headless = bool(headless)
         self.poll_seconds = max(0.2, float(poll_seconds))
         self.intensive_mode = True
+        # HttpMonitor: si True, después del capture usa httpx en lugar de _monitor_loop
+        self.use_http_monitor = bool(use_http_monitor)
+        self.http_concurrent_requests = max(1, min(30, int(http_concurrent_requests)))
+        self._http_monitor = None  # instancia HttpMonitor activa (si se usa)
         # Modo sueño: una consulta rotativa por renglón.
         self.relaxed_poll_seconds = max(1.0, self.poll_seconds)
         # Tuning de latencia (INTENSIVA):
@@ -89,7 +96,12 @@ class PlaywrightCollector(BaseCollector):
         # en portal real tienden a subir HTTP 0/500.
         self.intensive_batch_size = 3
         self.relaxed_batch_size = 10
-        self.intensive_request_timeout_ms = 1800
+        # 1800ms genera falsos timeout en picos de latencia del portal.
+        # 2500ms mantiene la cadencia normal cuando la respuesta llega rapido,
+        # y reduce cortes espurios cuando el servidor tarda ~2s.
+        self.intensive_request_timeout_ms = 2500
+        # Priorizar cadencia: sin retry extra por defecto en INTENSIVA.
+        # Esto evita extender ciclos cuando hay timeout transitorio.
         self.intensive_retry_timeout_ms = 0
         self.relaxed_request_timeout_ms = 5000
         self.console_perf_logs = True
@@ -104,7 +116,8 @@ class PlaywrightCollector(BaseCollector):
             "id_cot": None,
             "margen": None,
             "subasta_url": None,
-            "renglones": None,  # list[dict(value,text)]
+            "renglones": None,      # list[dict(value,text)]
+            "session_cookies": {},  # cookies extraídas de Playwright (para HttpMonitor)
         }
 
     # -------------------------
@@ -156,6 +169,15 @@ class PlaywrightCollector(BaseCollector):
 
     def set_intensive_monitoring(self, enabled: bool) -> None:
         self.cmd_q.put({"cmd": "set_intensive", "enabled": bool(enabled)})
+
+    def set_http_monitor_mode(self, enabled: bool) -> None:
+        """
+        Activa o desactiva HttpMonitor en caliente.
+        El cambio tiene efecto en el PRÓXIMO capture_current.
+        """
+        self.use_http_monitor = bool(enabled)
+        mode = "HttpMonitor (httpx directo)" if enabled else "Playwright (Chromium)"
+        self.emit(info(EventType.HEARTBEAT, f"Modo de monitoreo cambiado a: {mode}"))
 
     # -------------------------
     # Internals
@@ -247,12 +269,18 @@ class PlaywrightCollector(BaseCollector):
                     effective = self.poll_seconds if self.intensive_mode else self.relaxed_poll_seconds
                     mode_txt = "INTENSIVA" if self.intensive_mode else "SUEÑO"
                     self.emit(info(EventType.HEARTBEAT, f"poll_seconds actualizado: base={poll_seconds:.2f}s modo={mode_txt} efectivo={effective:.2f}s"))
+                    # Propagar al HttpMonitor si está activo
+                    if self._http_monitor is not None:
+                        self._http_monitor.set_poll_seconds(poll_seconds)
 
                 elif name == "set_intensive":
                     self.intensive_mode = bool(cmd.get("enabled", True))
                     effective = self.poll_seconds if self.intensive_mode else self.relaxed_poll_seconds
                     mode_txt = "INTENSIVA" if self.intensive_mode else "SUEÑO"
                     self.emit(info(EventType.HEARTBEAT, f"Modo monitoreo: {mode_txt} (poll efectivo={effective:.2f}s)"))
+                    # Propagar al HttpMonitor si está activo
+                    if self._http_monitor is not None:
+                        self._http_monitor.set_intensive(self.intensive_mode)
 
                 elif name == "open_listado":
                     if not await _ensure_page():
@@ -264,6 +292,10 @@ class PlaywrightCollector(BaseCollector):
                         self.emit(error(EventType.EXCEPTION, f"Error abriendo listado: {e}"))
 
                 elif name == "stop_monitor":
+                    # Detener HttpMonitor si está activo
+                    if self._http_monitor is not None:
+                        self._http_monitor.stop()
+                        self._http_monitor = None
                     if monitor_task and not monitor_task.done():
                         monitor_task.cancel()
                         try:
@@ -305,9 +337,35 @@ class PlaywrightCollector(BaseCollector):
                             )
                         )
 
-                        # Arranca monitoreo
-                        monitor_task = asyncio.create_task(self._monitor_loop(page, poll_seconds))
-                        self.emit(info(EventType.HEARTBEAT, "Monitoreo iniciado (task creada)."))
+                        if self.use_http_monitor:
+                            # --- MODO RÁPIDO: httpx directo sin Chromium ---
+                            from app.collector.http_monitor import HttpMonitor
+                            http_mon = HttpMonitor(
+                                out_q=self.out_q,
+                                poll_seconds=self.poll_seconds,
+                                intensive_mode=self.intensive_mode,
+                                concurrent_requests=self.http_concurrent_requests,
+                                request_timeout_s=self.intensive_request_timeout_ms / 1000.0,
+                                relaxed_timeout_s=self.relaxed_request_timeout_ms / 1000.0,
+                                relaxed_poll_seconds=self.relaxed_poll_seconds,
+                                console_perf_logs=self.console_perf_logs,
+                            )
+                            self._http_monitor = http_mon
+                            monitor_task = asyncio.create_task(http_mon.run(
+                                id_cot=self.current["id_cot"],
+                                margen=self.current["margen"],
+                                renglones=self.current["renglones"],
+                                cookies=self.current["session_cookies"],
+                                referer=self.current["subasta_url"],
+                            ))
+                            self.emit(info(EventType.HEARTBEAT,
+                                f"[HttpMonitor] Monitoreo rápido iniciado "
+                                f"(httpx directo, concurrencia={self.http_concurrent_requests})."))
+                        else:
+                            # --- MODO ESTÁNDAR: Playwright Chromium ---
+                            self._http_monitor = None
+                            monitor_task = asyncio.create_task(self._monitor_loop(page, poll_seconds))
+                            self.emit(info(EventType.HEARTBEAT, "Monitoreo Playwright iniciado (task creada)."))
                     else:
                         self.emit(warn(EventType.EXCEPTION, "No se pudo capturar subasta actual."))
 
@@ -591,12 +649,25 @@ class PlaywrightCollector(BaseCollector):
         self.current["subasta_url"] = page.url
         self.current["renglones"] = options
 
-        self.emit(
-            info(
-                EventType.HEARTBEAT,
-                f"CAPTURE OK: id_cot={id_cot} margen={margen} renglones={len(options)}",
-            )
-        )
+        # Extraer cookies de la sesión para uso por HttpMonitor
+        # Hacemos esto siempre (bajo costo), aunque use_http_monitor sea False,
+        # para tenerlas disponibles si cambia en caliente.
+        try:
+            all_cookies = await page.context.cookies()
+            self.current["session_cookies"] = {
+                c["name"]: c["value"]
+                for c in all_cookies
+                if BASE_DOMAIN in c.get("domain", "")
+            }
+            self.emit(info(EventType.HEARTBEAT,
+                f"CAPTURE OK: id_cot={id_cot} margen={margen} renglones={len(options)} "
+                f"cookies={len(self.current['session_cookies'])}"))
+        except Exception as e:
+            self.current["session_cookies"] = {}
+            self.emit(warn(EventType.HEARTBEAT,
+                f"CAPTURE OK pero no se pudieron extraer cookies: {e}. "
+                f"id_cot={id_cot} renglones={len(options)}"))
+
         return True
 
     @staticmethod

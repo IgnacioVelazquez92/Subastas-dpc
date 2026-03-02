@@ -9,7 +9,7 @@
 
 **Monitor de Subastas Electrónicas** es una aplicación de escritorio Python que monitorea en tiempo real el portal de subastas e-Commerce de la provincia de Córdoba (Argentina). El sistema captura automáticamente cambios de precios usando Playwright, los persiste en SQLite, aplica reglas de alertas y los muestra en una UI de escritorio moderna (CustomTkinter).
 
-**Estado actual:** v1.0 — primera versión funcional completa. El sistema fue construido iterativamente con refactors documentados en `docs/`.
+**Estado actual:** v1.1 — se agregó `HttpMonitor`, un monitor de polling HTTP directo (httpx) que reemplaza el loop de Chromium para el monitoreo intensivo. Playwright sigue siendo responsable del browse + capture inicial; solo el loop de polling es reemplazado por httpx, logrando latencias de 0.2–2s vs 3–20s.
 
 ---
 
@@ -53,30 +53,50 @@ RenglonEstado (lectura actual del portal)
 
 ### Flujo de datos
 
+Modo estándar (Playwright puro):
 ```
-[Portal web] --Playwright--> [PlaywrightCollector]
-                                      |
-                              eventos (Queue)
-                                      |
-                                      v
-                               [Engine]
-                                /     \
-                          [SQLite]   [AlertEngine]
-                                      |
-                              eventos procesados (Queue)
-                                      |
-                                      v
-                                  [UI App]
-                               (event_handler.py despacha
-                                a table_manager, logger, etc.)
+[Portal web] --Playwright/Chromium--> [PlaywrightCollector._monitor_loop]
+                                              |
+                                      eventos (Queue)
+                                              |
+                                              v
+                                       [Engine]
+                                        /     \
+                                  [SQLite]   [AlertEngine]
+                                              |
+                                      eventos procesados (Queue)
+                                              |
+                                              v
+                                          [UI App]
 ```
+
+Modo híbrido (use_http_monitor=True — RECOMENDADO para producción):
+```
+[Portal web] --Playwright/Chromium--> [PlaywrightCollector._capture_current]
+                                              |
+                           extrae: id_cot, renglones, cookies de sesión
+                                              |
+                                              v
+                               [HttpMonitor.run()]  ← httpx directo, sin Chromium
+                          POST BuscarOfertas (hasta 30 req. paralelas)
+                                              |
+                                      eventos (Queue)  ← mismo formato
+                                              |
+                                              v
+                                       [Engine] → [UI App]  ← sin cambios
+```
+
+En modo híbrido, Chromium **queda abierto** pero en reposo: el usuario puede seguir navegando manualmente. Si la sesión httpx expira (401/403 × 5), `HttpMonitor` emite `WARN(EXCEPTION, "sesión expirada")` y se detiene; el usuario puede hacer `capture_current` de nuevo para refrescar cookies.
 
 ### Threading
 
 - **Main thread**: UI (Tkinter — obligatorio, no puede moverse)
-- **Thread Collector**: corre el loop de scraping / simulación
+- **Thread Collector**: corre el loop asyncio de Playwright (`asyncio.run(_main())`)
+  - Dentro del loop asyncio corre como tarea: `HttpMonitor.run()` (modo híbrido) o `_monitor_loop()` (modo estándar)
 - **Thread Engine**: consume la queue del Collector, procesa y emite a la queue de la UI
 - **UI polling**: `app.py` usa `after()` para consumir la queue del Engine sin bloquear la UI
+
+Nota: `HttpMonitor` corre como `asyncio.Task` dentro del mismo event loop del Thread Collector, sin threads adicionales.
 
 ### Comunicación entre capas
 
@@ -135,12 +155,32 @@ El cálculo de `renta_para_mejorar` está centralizado. Ver `docs/GUIA_FORMATO_R
 
 ## Modos de Ejecución
 
-### PLAYWRIGHT (producción)
+### PLAYWRIGHT estándar (Chromium puro)
 
-- Usa `PlaywrightCollector` que lanza Chromium automáticamente
-- Navega al portal, hace scraping de la tabla de renglones
-- Emite `SNAPSHOT` al inicio y `UPDATE` por cada cambio detectado
-- `autostart_collector=False` en este modo — el usuario debe iniciar manualmente desde la UI (botón Start)
+- Usa `PlaywrightCollector` con `use_http_monitor=False` (default actual)
+- Cada request del portal pasa por Chromium: Python → asyncio → page.evaluate → fetch → portal
+- Latencia por ciclo (20 renglones): 3–20 segundos
+- `autostart_collector=False` — el usuario debe iniciar manualmente desde la UI (botón Start)
+
+### PLAYWRIGHT + HttpMonitor (modo híbrido — recomendado para producción)
+
+- Usa `PlaywrightCollector` con `use_http_monitor=True`
+- Chromium sigue activo para browse + capture (extrae cookies de sesión ASP.NET)
+- Una vez capturado, el polling lo hace `HttpMonitor` (httpx directo)
+- Activar en `app_runtime.py`: `AppRuntime(..., use_http_monitor=True, http_concurrent_requests=10)`
+- O en caliente: `collector.set_http_monitor_mode(True)` (efecto en el próximo capture)
+- Latencia por ciclo (20 renglones): 0.2–2 segundos
+- Concurrencia configurable: hasta 30 requests en paralelo
+- Modos INTENSIVA y SUEÑO disponibles (igual que el sistema original)
+
+#### Parámetros de HttpMonitor
+
+| Parámetro | Tipo | Default | Descripción |
+|---|---|---|---|
+| `use_http_monitor` | bool | False | Activar modo híbrido |
+| `http_concurrent_requests` | int | 5 | Requests paralelos (max 30) |
+| `request_timeout_s` | float | 2.5 | Timeout en modo INTENSIVA |
+| `relaxed_timeout_s` | float | 5.0 | Timeout en modo SUEÑO |
 
 ### MOCK (desarrollo/testing)
 
@@ -250,6 +290,23 @@ Los estilos se definen en `alert_engine.py` y se aplican en `formatters.py`:
 - MOCK permite desarrollar y testear la UI en cualquier momento
 - Los escenarios JSON documentan casos de uso reales
 
+### Por qué HttpMonitor en lugar de reescribir el collector
+
+- `PlaywrightCollector` sigue siendo el responsable del browse + capture: el usuario navega normalmente en Chromium y nosotros extraemos los datos del DOM (id_cot, renglones, cookies)
+- `HttpMonitor` es un módulo separado (`app/collector/http_monitor.py`) que el collector activa como `asyncio.Task` en el mismo event loop, sin afectar Engine/UI/DB
+- El flag `use_http_monitor=False` por defecto: el colector Playwright original sigue siendo el fallback estable — regresión cero
+- `httpx` async se integra limpio con el `asyncio.run()` existente del Thread Collector, sin threads adicionales ni cambios en la arquitectura de colas
+- Emite exactamente los mismos `Event` con los mismos payloads: Engine y UI no notan la diferencia
+
+### Por qué las peticiones no funcionaban desde Python/Postman antes
+
+El endpoint `BuscarOfertas` es un `WebMethod` de ASP.NET ScriptManager. Requiere:
+1. Cookies de sesión ASP.NET (`ASP.NET_SessionId`, etc.) — obtenidas al navegar con Chromium
+2. Header `X-Requested-With: XMLHttpRequest` — presente en httpx ahora
+3. Body JSON con `{id_Cotizacion, id_Item_Renglon, Margen_Minimo}` — conocido desde el análisis inicial
+
+El problema original era que no teníamos las cookies de sesión. Ahora `_capture_current` las extrae de `page.context.cookies()` y las pasa a `HttpMonitor`.
+
 ---
 
 ## Contexto de la Colaboración IA
@@ -272,6 +329,8 @@ Ver `docs/` para el historial completo:
 3. **`app/core/events.py`** — Contrato entre capas; cambios requieren actualizar todos los consumidores
 4. **Lógica de renta** — Fórmulas validadas en `docs/VERIFICACION_CALCULOS.md`
 5. **Threading** — No llamar a widgets Tkinter desde threads secundarios
+6. **`app/collector/http_monitor.py`** — `_parse_d_field` es una copia del de `PlaywrightCollector`; si el portal cambia el formato de respuesta, actualizar en ambos lugares
+7. **Cookies de sesión** — se extraen en `_capture_current` vía `page.context.cookies()`. Si el portal agrega validación extra (CSRF token, `__RequestVerificationToken`), hay que extraerlos también del HTML en ese mismo método
 
 ### Qué está listo vs. qué falta
 
@@ -285,8 +344,20 @@ Ver `docs/` para el historial completo:
 - Modo MOCK con escenarios JSON
 - Columnas configurables con persistencia
 
+**Listo (v1.1):**
+- `HttpMonitor` — monitor de polling httpx directo sin Chromium en el loop (`app/collector/http_monitor.py`)
+- `PlaywrightCollector` extrae cookies de sesión en `_capture_current` y las pasa a `HttpMonitor`
+- Flag `use_http_monitor=False/True` en `PlaywrightCollector` y `AppRuntime` (sin cambio de comportamiento por default)
+- Modos INTENSIVA y SUEÑO disponibles en `HttpMonitor` (idénticos al original)
+- Comandos `set_poll_seconds` / `set_intensive_monitoring` propagan al `HttpMonitor` cuando está activo
+- Nuevo método público: `collector.set_http_monitor_mode(True/False)` para cambiar en caliente
+- `httpx[http2]>=0.27` agregado a `requirements.txt`
+
 **Pendiente / mejoras posibles:**
-- Autenticación y manejo de sesión del portal (login automático)
+- Validar en portal real que las cookies solas son suficientes (sin CSRF extra)
+- Exposición del flag `use_http_monitor` en la UI (checkbox en settings o menú)
+- Re-autenticación automática: si `HttpMonitor` detecta sesión expirada, notificar a la UI para que el usuario haga re-capture
+- Autenticación completa: login automático con credenciales (sin intervención manual)
 - Múltiples subastas simultáneas en pestañas
 - Dashboard de resumen entre subastas
 - Exportación a PDF
@@ -295,4 +366,4 @@ Ver `docs/` para el historial completo:
 
 ---
 
-*Última actualización: 2026-02-25*
+*Última actualización: 2026-03-01*

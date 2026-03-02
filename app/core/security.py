@@ -87,6 +87,7 @@ class SecurityPolicy:
         last_ok_at: Optional[str],
         http_status: int,
         mensaje: str = "",
+        error_kind: str = "",
     ) -> SecurityDecision:
         """
         Evalúa el estado actual y decide una acción.
@@ -104,9 +105,12 @@ class SecurityPolicy:
         # 2) Error HTTP actual
         if http_status != 200:
             msg = (mensaje or "").lower()
+            kind = (error_kind or "").strip().lower()
             # HTTP=0 timeout/abort suele ser transitorio del browser/red.
             # En este caso evitamos backoff para no degradar la latencia global.
-            is_http0_timeout = http_status == 0 and ("timeout" in msg or "abort" in msg)
+            is_http0_timeout = http_status == 0 and (
+                kind in {"timeout", "abort"} or ("timeout" in msg or "abort" in msg)
+            )
             if is_http0_timeout and not self.backoff_on_http0_timeout:
                 return SecurityDecision(
                     action=SecurityAction.ALERT,

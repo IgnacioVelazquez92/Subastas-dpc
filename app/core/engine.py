@@ -842,6 +842,7 @@ class Engine:
         payload = ev.payload or {}
         http_status = int(payload.get("http_status", 500))
         id_cot = payload.get("id_cot")
+        error_kind = str(payload.get("error_kind") or "").strip().lower()
 
         self._agg_counts["http_error"] += 1
 
@@ -858,10 +859,18 @@ class Engine:
         prev = int(self.subasta_err_streak.get(subasta_id, 0))
         now_dt = datetime.now()
         last_err_dt = self.subasta_last_error_at.get(subasta_id)
+        msg_l = str(ev.message or "").lower()
+        is_http0_timeout = http_status == 0 and (
+            error_kind in {"timeout", "abort"} or ("timeout" in msg_l or "abort" in msg_l)
+        )
         # Evitar escalar streak por múltiples errores del mismo ciclo/lote.
         # Contamos un nuevo "paso" de error solo si pasó una ventana mínima.
         error_window_seconds = 1.5
-        if last_err_dt and (now_dt - last_err_dt).total_seconds() < error_window_seconds:
+        if is_http0_timeout and not self.security.backoff_on_http0_timeout:
+            # Timeout HTTP=0 transitorio: no acumular streak destructivo.
+            streak = 1
+            self.subasta_last_error_at[subasta_id] = now_dt
+        elif last_err_dt and (now_dt - last_err_dt).total_seconds() < error_window_seconds:
             streak = prev
         else:
             streak = prev + 1
@@ -883,6 +892,7 @@ class Engine:
             last_ok_at=last_ok_at,
             http_status=http_status,
             mensaje=str(ev.message),
+            error_kind=error_kind,
         )
 
         detail = f"HTTP={http_status} streak={streak} -> {decision.action.value} ({decision.message})"
