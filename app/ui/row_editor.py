@@ -680,6 +680,21 @@ class RowEditorDialog:
         cfg = self.db_runtime.get_renglon_config(renglon_id=self.row.renglon_pk) or {}
         tracked = bool(self.row.seguir or self.row.costo_unit_ars or self.row.costo_total_ars)
         oferta_mia = bool(cfg.get("oferta_mia", False))
+        mi_id_prov = None
+        try:
+            mi_id_prov = self.db_runtime.get_mi_id_proveedor()
+        except Exception:
+            mi_id_prov = None
+
+        mejor_id_proveedor = getattr(self.row, "mejor_id_proveedor", None)
+        oferta_mia_auto = bool(
+            mejor_id_proveedor is not None
+            and mi_id_prov is not None
+            and str(mejor_id_proveedor).strip() == str(mi_id_prov).strip()
+        )
+        if oferta_mia_auto:
+            oferta_mia = True
+
         utilidad_min_pct = (
             float(self.row.renta_minima) * 100.0
             if self.row.renta_minima is not None
@@ -693,6 +708,7 @@ class RowEditorDialog:
         decision = self.alert_engine.decide(
             tracked=tracked,
             oferta_mia=oferta_mia,
+            oferta_mia_auto=oferta_mia_auto,
             utilidad_pct=utilidad_pct,
             utilidad_min_pct=utilidad_min_pct,
             ocultar_bajo_umbral=bool(cfg.get("ocultar_bajo_umbral", False)),

@@ -22,7 +22,7 @@ from typing import Optional
 
 from app.core.app_runtime import RuntimeHandles
 from app.core.events import Event, EventType
-from app.core.alert_engine import RowStyle
+from app.core.alert_engine import RowStyle, AlertEngine
 from app.models.domain import UIRow
 from app.ui.table_manager import TableManager
 from app.ui.column_manager import ColumnManager
@@ -482,6 +482,57 @@ class App(ctk.CTk):
         row_values = DisplayValues.build_row_values(row)
         self.table_mgr.render_row(row.id_renglon, row_values, style)
 
+    def _reapply_offer_identity_styles(self, my_provider_id: str | None) -> None:
+        if not self.table_mgr:
+            return
+
+        alert_engine = AlertEngine()
+        my_provider_id = str(my_provider_id or "").strip()
+
+        for row in self.rows.values():
+            prev_auto = bool(getattr(row, "oferta_mia_auto", False))
+            best_provider = str(getattr(row, "mejor_id_proveedor", "") or "").strip()
+            auto_match = bool(my_provider_id and best_provider and best_provider == my_provider_id)
+
+            if auto_match:
+                row.oferta_mia_auto = True
+                row.oferta_mia = True
+            else:
+                row.oferta_mia_auto = False
+                if prev_auto:
+                    row.oferta_mia = False
+
+            tracked = bool(row.seguir or row.costo_total_ars is not None or row.costo_unit_ars is not None)
+            utilidad_pct = None
+            if row.renta_para_mejorar is not None:
+                try:
+                    utilidad_pct = float(row.renta_para_mejorar) * 100.0
+                except Exception:
+                    utilidad_pct = None
+
+            utilidad_min_pct = 10.0
+            if row.renta_minima is not None:
+                try:
+                    utilidad_min_pct = float(row.renta_minima) * 100.0
+                except Exception:
+                    utilidad_min_pct = 10.0
+
+            decision = alert_engine.decide(
+                tracked=tracked,
+                oferta_mia=bool(row.oferta_mia),
+                oferta_mia_auto=bool(getattr(row, "oferta_mia_auto", False)),
+                utilidad_pct=utilidad_pct,
+                utilidad_min_pct=utilidad_min_pct,
+                ocultar_bajo_umbral=False,
+                changed=False,
+                http_status=200,
+                mensaje=str(row.obs_cambio or ""),
+                outbid=False,
+            )
+
+            row_values = DisplayValues.build_row_values(row)
+            self.table_mgr.render_row(row.id_renglon, row_values, decision.style.value)
+
     def _set_row_led_symbol(self, row: UIRow, symbol: str) -> None:
         new_value = symbol
         if row.update_led == new_value:
@@ -645,6 +696,7 @@ class App(ctk.CTk):
         value = self._mi_id_prov_var.get().strip()
         try:
             self.handles.runtime.set_mi_id_proveedor(value if value else None)
+            self._reapply_offer_identity_styles(value if value else None)
             if value:
                 self._lbl_mi_prov_status.configure(
                     text=f"✓ Guardado: {value}",
