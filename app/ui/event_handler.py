@@ -206,6 +206,12 @@ class EventProcessor:
         should_render = is_new or bool(payload.get("changed")) or data_changed
         
         if should_render:
+            if bool(payload.get("changed")):
+                try:
+                    if callable(self.on_offer_changed):
+                        self.on_offer_changed()
+                except Exception:
+                    pass
             # Log inteligente de cambios
             if not is_new and old_mejor_txt != row.mejor_oferta_txt and row.mejor_oferta_txt:
                 # Log detallado del cambio con timestamp Playwright y local.
@@ -218,12 +224,6 @@ class EventProcessor:
                     f"📊 [{rid}] {row.desc}: {old_mejor_txt} → {row.mejor_oferta_txt} | "
                     f"prov={prov_txt} | playwright={pw_ts or '-'} | local={local_ts} | delta={delta_txt}"
                 )
-                # Disparar LED de cambios de oferta (será implementado en app.py)
-                try:
-                    if hasattr(self, 'on_offer_changed'):
-                        self.on_offer_changed()
-                except Exception:
-                    pass
             
             # Aplicar decoraciones (estilo, sonido, etc.)
             style = self._apply_event_decorations(row, payload, ev)

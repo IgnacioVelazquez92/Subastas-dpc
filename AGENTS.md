@@ -11,6 +11,17 @@
 
 **Estado actual:** v1.1 — se agregó `HttpMonitor`, un monitor de polling HTTP directo (httpx) que reemplaza el loop de Chromium para el monitoreo intensivo. Playwright sigue siendo responsable del browse + capture inicial; solo el loop de polling es reemplazado por httpx, logrando latencias de 0.2–2s vs 3–20s.
 
+**Últimas mejoras (2026-03-02):**
+- El switch `HTTP Monitor` de la UI ahora tiene prioridad real sobre el backend activo.
+- `HTTP Monitor = ON` fuerza backend `HTTPX_DIRECT`.
+- `HTTP Monitor = OFF` fuerza backend `PLAYWRIGHT_PAGE`.
+- Si ya hay monitoreo activo y una subasta capturada, el cambio de backend se aplica en caliente.
+- Se agregó ciclo completo `Detener` / `Reanudar` en la UI para pausar y retomar la supervisión sin cerrar el navegador.
+- `Reanudar` reutiliza la captura actual; si el navegador quedó parado en otra subasta, el collector recaptura esa subasta antes de reiniciar el backend activo.
+- El modo `INTENSIVA` / `SUEÑO` se sigue respetando sin importar el backend.
+- Los logs de consola distinguen explícitamente `backend=HTTPX_DIRECT` vs `backend=PLAYWRIGHT_PAGE`.
+- El LED HTTP y el LED/pulso de actividad por renglón también responden a eventos emitidos por `HttpMonitor`.
+
 ---
 
 ## Dominio del Problema
@@ -88,6 +99,12 @@ Modo híbrido (use_http_monitor=True — RECOMENDADO para producción):
 ```
 
 En modo híbrido, Chromium **queda abierto** pero en reposo: el usuario puede seguir navegando manualmente. Si la sesión httpx expira (401/403 × 5), `HttpMonitor` emite `WARN(EXCEPTION, "sesión expirada")` y se detiene; el usuario puede hacer `capture_current` de nuevo para refrescar cookies.
+
+Importante:
+- Navegar manualmente a otra subasta en Chromium **no** cambia por sí solo la subasta que está monitoreando `HttpMonitor`.
+- Para pasar a otra subasta hay que ejecutar `capture_current` nuevamente.
+- Ese `capture_current` refresca `id_cot`, `renglones`, `subasta_url` y `session_cookies`; desde ahí el backend activo sigue la subasta nueva.
+- Alternativamente, si el monitoreo estaba pausado, `Reanudar` detecta si el navegador quedó en otra subasta y hace esa recaptura antes de volver a monitorear.
 
 ### Threading
 
@@ -189,10 +206,17 @@ Notas:
 - Chromium sigue activo para browse + capture (extrae cookies de sesión ASP.NET)
 - Una vez capturado, el polling lo hace `HttpMonitor` (httpx directo)
 - Activar en `app_runtime.py`: `AppRuntime(..., use_http_monitor=True, http_concurrent_requests=10)`
-- O en caliente: `collector.set_http_monitor_mode(True)` (efecto en el próximo capture)
+- O en caliente: `collector.set_http_monitor_mode(True)` / switch `HTTP Monitor` de la UI
 - Latencia por ciclo (20 renglones): 0.2–2 segundos
 - Concurrencia configurable: hasta 30 requests en paralelo
 - Modos INTENSIVA y SUEÑO disponibles (igual que el sistema original)
+
+Comportamiento vigente del switch de UI:
+- `HTTP Monitor = ON` → backend prioritario `HTTPX_DIRECT`
+- `HTTP Monitor = OFF` → backend prioritario `PLAYWRIGHT_PAGE`
+- Si ya hay monitoreo activo y existe una subasta capturada, el cambio se aplica en caliente
+- Si el usuario navega a otra subasta, debe hacer `capture_current` para que el backend pase a la nueva
+- Si el usuario pausó monitoreo y luego quedó parado en otra subasta, `Reanudar` intenta recapturarla automáticamente
 
 #### Parámetros de HttpMonitor
 
@@ -372,6 +396,12 @@ Ver `docs/` para el historial completo:
 - Modos INTENSIVA y SUEÑO disponibles en `HttpMonitor` (idénticos al original)
 - Comandos `set_poll_seconds` / `set_intensive_monitoring` propagan al `HttpMonitor` cuando está activo
 - Nuevo método público: `collector.set_http_monitor_mode(True/False)` para cambiar en caliente
+- El switch `HTTP Monitor` de la UI quedó sincronizado con `runtime.use_http_monitor`
+- `set_http_monitor_mode()` puede cambiar el backend activo sin esperar al próximo capture, si ya hay una subasta capturada
+- Nuevo comando operativo: `resume_monitoring()` en `PlaywrightCollector` y `resume_collector()` en `AppRuntime`
+- Botón `Reanudar` agregado en la UI para cerrar el ciclo operativo del monitoreo
+- Logs de consola con backend explícito: `backend=HTTPX_DIRECT` o `backend=PLAYWRIGHT_PAGE`
+- El LED HTTP y la actividad visual por renglón ahora reflejan también updates/respuestas del backend `httpx`
 - `httpx[http2]>=0.27` agregado a `requirements.txt`
 - Soporte para `items_por_renglon` en capture, persistencia y UI
 - Cálculos unitarios/totales adaptados a renglones con múltiples ítems

@@ -59,6 +59,8 @@ SUBASTA_URL_PART = "SubastaVivoAccesoPublico.aspx"
 # Selectores esperados en la página de subasta
 SEL_RENGLON_SELECT = "#ddlItemRenglon"
 SEL_MARGEN_MINIMO = "#txtMargenMinimo"
+HTTPX_BACKEND = "HTTPX_DIRECT"
+PLAYWRIGHT_BACKEND = "PLAYWRIGHT_PAGE"
 
 
 class PlaywrightCollector(BaseCollector):
@@ -159,6 +161,13 @@ class PlaywrightCollector(BaseCollector):
         """
         self.cmd_q.put({"cmd": "stop_monitor"})
 
+    def resume_monitoring(self) -> None:
+        """
+        Comando: reanudar monitoreo con la captura actual.
+        Si el usuario quedó en otra subasta, el collector recaptura antes de reanudar.
+        """
+        self.cmd_q.put({"cmd": "resume_monitor"})
+
     def open_listado(self) -> None:
         """
         Comando: volver al listado (útil si el usuario se perdió).
@@ -174,11 +183,11 @@ class PlaywrightCollector(BaseCollector):
     def set_http_monitor_mode(self, enabled: bool) -> None:
         """
         Activa o desactiva HttpMonitor en caliente.
-        El cambio tiene efecto en el PRÓXIMO capture_current.
+        Si ya hay una subasta capturada y monitoreo activo, cambia el backend en vivo.
         """
-        self.use_http_monitor = bool(enabled)
-        mode = "HttpMonitor (httpx directo)" if enabled else "Playwright (Chromium)"
-        self.emit(info(EventType.HEARTBEAT, f"Modo de monitoreo cambiado a: {mode}"))
+        enabled = bool(enabled)
+        self.use_http_monitor = enabled
+        self.cmd_q.put({"cmd": "set_http_mode", "enabled": enabled})
 
     # -------------------------
     # Internals
@@ -246,6 +255,110 @@ class PlaywrightCollector(BaseCollector):
             monitor_task: asyncio.Task | None = None
             tick = 0
 
+            async def _stop_active_monitor() -> None:
+                nonlocal monitor_task
+                if self._http_monitor is not None:
+                    self._http_monitor.stop()
+                    self._http_monitor = None
+                if monitor_task and not monitor_task.done():
+                    monitor_task.cancel()
+                    try:
+                        await monitor_task
+                    except asyncio.CancelledError:
+                        pass
+                    except Exception:
+                        pass
+                monitor_task = None
+
+            async def _start_selected_monitor() -> bool:
+                nonlocal monitor_task, poll_seconds, page
+                id_cot = self.current.get("id_cot")
+                renglones = self.current.get("renglones") or []
+                if not id_cot or not renglones:
+                    self.emit(warn(EventType.EXCEPTION,
+                        "No hay subasta capturada para cambiar backend de monitoreo."))
+                    return False
+
+                if self.use_http_monitor:
+                    from app.collector.http_monitor import HttpMonitor
+                    http_mon = HttpMonitor(
+                        out_q=self.out_q,
+                        poll_seconds=self.poll_seconds,
+                        intensive_mode=self.intensive_mode,
+                        concurrent_requests=self.http_concurrent_requests,
+                        request_timeout_s=self.intensive_request_timeout_ms / 1000.0,
+                        relaxed_timeout_s=self.relaxed_request_timeout_ms / 1000.0,
+                        relaxed_poll_seconds=self.relaxed_poll_seconds,
+                        console_perf_logs=self.console_perf_logs,
+                    )
+                    self._http_monitor = http_mon
+                    monitor_task = asyncio.create_task(http_mon.run(
+                        id_cot=id_cot,
+                        margen=self.current["margen"],
+                        renglones=renglones,
+                        cookies=self.current["session_cookies"],
+                        referer=self.current["subasta_url"],
+                    ))
+                    self.emit(info(EventType.HEARTBEAT,
+                        f"[MonitorBackend] backend={HTTPX_BACKEND} "
+                        f"source=active_monitor id_cot={id_cot} "
+                        f"renglones={len(renglones)} "
+                        f"cookies={len(self.current['session_cookies'] or {})} "
+                        f"concurrencia={self.http_concurrent_requests}"))
+                else:
+                    self._http_monitor = None
+                    monitor_task = asyncio.create_task(self._monitor_loop(page, poll_seconds))
+                    self.emit(info(EventType.HEARTBEAT,
+                        f"[MonitorBackend] backend={PLAYWRIGHT_BACKEND} "
+                        f"source=active_monitor id_cot={id_cot} "
+                        f"renglones={len(renglones)}"))
+                return True
+
+            async def _resume_current_monitor() -> bool:
+                nonlocal page
+                if not await _ensure_page():
+                    self.emit(warn(EventType.EXCEPTION, "No se pudo restaurar navegador para reanudar monitoreo."))
+                    return False
+
+                page_url = ""
+                try:
+                    page_url = str(page.url or "")
+                except Exception:
+                    page_url = ""
+
+                current_url = str(self.current.get("subasta_url") or "")
+                has_capture = bool(self.current.get("id_cot")) and bool(self.current.get("renglones"))
+
+                if SUBASTA_URL_PART in page_url and page_url != current_url:
+                    self.emit(info(
+                        EventType.HEARTBEAT,
+                        f"[Resume] Otra subasta detectada en navegador. "
+                        f"Recapturando antes de reanudar. from={current_url or '-'} to={page_url}"
+                    ))
+                    ok = await self._capture_current(page)
+                    if not ok:
+                        self.emit(warn(EventType.EXCEPTION,
+                            "No se pudo recapturar la subasta actual antes de reanudar."))
+                        return False
+                    self.emit(info(
+                        EventType.SNAPSHOT,
+                        "Subasta recapturada al reanudar monitoreo.",
+                        payload={
+                            "id_cot": self.current["id_cot"],
+                            "margen": self.current["margen"],
+                            "subasta_url": self.current["subasta_url"],
+                            "renglones": self.current["renglones"],
+                        },
+                    ))
+                    has_capture = True
+
+                if not has_capture:
+                    self.emit(warn(EventType.EXCEPTION,
+                        "No hay una subasta capturada para reanudar. Usá 'Capturar actual'."))
+                    return False
+
+                return await _start_selected_monitor()
+
             while not self._stop_flag:
                 tick += 1
 
@@ -293,30 +406,40 @@ class PlaywrightCollector(BaseCollector):
                         self.emit(error(EventType.EXCEPTION, f"Error abriendo listado: {e}"))
 
                 elif name == "stop_monitor":
-                    # Detener HttpMonitor si está activo
-                    if self._http_monitor is not None:
-                        self._http_monitor.stop()
-                        self._http_monitor = None
-                    if monitor_task and not monitor_task.done():
-                        monitor_task.cancel()
-                        try:
-                            await monitor_task
-                        except asyncio.CancelledError:
-                            pass
-                        except Exception:
-                            pass
+                    await _stop_active_monitor()
                     self.emit(info(EventType.STOP, "Monitoreo pausado por usuario."))
 
+                elif name == "resume_monitor":
+                    is_active = monitor_task is not None and not monitor_task.done()
+                    if is_active:
+                        self.emit(info(EventType.HEARTBEAT, "Monitoreo ya estaba activo; no se reanudó nada."))
+                        continue
+                    resumed = await _resume_current_monitor()
+                    if resumed:
+                        backend = HTTPX_BACKEND if self.use_http_monitor else PLAYWRIGHT_BACKEND
+                        self.emit(info(EventType.START, f"Monitoreo reanudado (backend={backend})."))
+
+                elif name == "set_http_mode":
+                    enabled = bool(cmd.get("enabled", False))
+                    self.use_http_monitor = enabled
+                    mode = "HttpMonitor (httpx directo)" if enabled else "Playwright (Chromium)"
+                    backend = HTTPX_BACKEND if enabled else PLAYWRIGHT_BACKEND
+                    self.emit(info(EventType.HEARTBEAT,
+                        f"Modo de monitoreo cambiado a: {mode} backend={backend}"))
+
+                    has_capture = bool(self.current.get("id_cot")) and bool(self.current.get("renglones"))
+                    is_active = monitor_task is not None and not monitor_task.done()
+                    if not has_capture:
+                        continue
+                    if is_active:
+                        await _stop_active_monitor()
+                        await _start_selected_monitor()
+                    else:
+                        self.emit(info(EventType.HEARTBEAT,
+                            f"[MonitorBackend] backend={backend} listo para el próximo inicio de monitoreo."))
+
                 elif name == "capture_current":
-                    # Cancelar monitoreo anterior si existia
-                    if monitor_task and not monitor_task.done():
-                        monitor_task.cancel()
-                        try:
-                            await monitor_task
-                        except asyncio.CancelledError:
-                            pass
-                        except Exception:
-                            pass
+                    await _stop_active_monitor()
 
                     if not await _ensure_page():
                         self.emit(warn(EventType.EXCEPTION, "No se pudo relanzar navegador para capturar."))
@@ -338,35 +461,7 @@ class PlaywrightCollector(BaseCollector):
                             )
                         )
 
-                        if self.use_http_monitor:
-                            # --- MODO RÁPIDO: httpx directo sin Chromium ---
-                            from app.collector.http_monitor import HttpMonitor
-                            http_mon = HttpMonitor(
-                                out_q=self.out_q,
-                                poll_seconds=self.poll_seconds,
-                                intensive_mode=self.intensive_mode,
-                                concurrent_requests=self.http_concurrent_requests,
-                                request_timeout_s=self.intensive_request_timeout_ms / 1000.0,
-                                relaxed_timeout_s=self.relaxed_request_timeout_ms / 1000.0,
-                                relaxed_poll_seconds=self.relaxed_poll_seconds,
-                                console_perf_logs=self.console_perf_logs,
-                            )
-                            self._http_monitor = http_mon
-                            monitor_task = asyncio.create_task(http_mon.run(
-                                id_cot=self.current["id_cot"],
-                                margen=self.current["margen"],
-                                renglones=self.current["renglones"],
-                                cookies=self.current["session_cookies"],
-                                referer=self.current["subasta_url"],
-                            ))
-                            self.emit(info(EventType.HEARTBEAT,
-                                f"[HttpMonitor] Monitoreo rápido iniciado "
-                                f"(httpx directo, concurrencia={self.http_concurrent_requests})."))
-                        else:
-                            # --- MODO ESTÁNDAR: Playwright Chromium ---
-                            self._http_monitor = None
-                            monitor_task = asyncio.create_task(self._monitor_loop(page, poll_seconds))
-                            self.emit(info(EventType.HEARTBEAT, "Monitoreo Playwright iniciado (task creada)."))
+                        await _start_selected_monitor()
                     else:
                         self.emit(warn(EventType.EXCEPTION, "No se pudo capturar subasta actual."))
 
@@ -375,14 +470,7 @@ class PlaywrightCollector(BaseCollector):
 
             # Shutdown limpio
             try:
-                if monitor_task and not monitor_task.done():
-                    monitor_task.cancel()
-                    try:
-                        await monitor_task
-                    except asyncio.CancelledError:
-                        pass
-                    except Exception:
-                        pass
+                await _stop_active_monitor()
             except Exception:
                 pass
 
@@ -779,6 +867,9 @@ class PlaywrightCollector(BaseCollector):
         tick = 0
         sleep_cursor = 0
         self.emit(info(EventType.HEARTBEAT, f"Monitoreo activo: id_cot={id_cot} poll_base={self.poll_seconds:.2f}s"))
+        self.emit(info(EventType.HEARTBEAT,
+            f"[MonitorBackend] backend={PLAYWRIGHT_BACKEND} endpoint=browser.fetch "
+            f"id_cot={id_cot} renglones={len(renglones)}"))
 
         while not self._stop_flag:
             cycle_started = time.monotonic()
@@ -800,6 +891,8 @@ class PlaywrightCollector(BaseCollector):
             total_retries = 0
             total_http_errors = 0
             total_timeouts = 0
+            status_counts: dict[int, int] = {}
+            error_samples: list[str] = []
             if self.intensive_mode:
                 cycle_renglones = list(renglones)
                 batch_size = self._pick_intensive_batch_size(len(cycle_renglones))
@@ -883,6 +976,7 @@ class PlaywrightCollector(BaseCollector):
                     desc = opt.get("text") or ""
                     status = int((res or {}).get("status", 0))
                     body = ((res or {}).get("json") or {})
+                    status_counts[status] = status_counts.get(status, 0) + 1
 
                     if status != 200:
                         total_http_errors += 1
@@ -905,6 +999,8 @@ class PlaywrightCollector(BaseCollector):
                                     },
                                 )
                             )
+                            if len(error_samples) < 5:
+                                error_samples.append(f"{rid}:0:{err_kind or 'error'}")
                         else:
                             self.emit(
                                 warn(
@@ -919,6 +1015,8 @@ class PlaywrightCollector(BaseCollector):
                                     },
                                 )
                             )
+                            if len(error_samples) < 5:
+                                error_samples.append(f"{rid}:{status}:http_error")
                         continue
 
                     d = body.get("d", "") or ""
@@ -995,8 +1093,10 @@ class PlaywrightCollector(BaseCollector):
                     EventType.HEARTBEAT,
                     (
                         f"[METRICA] ciclo={tick} renglones={len(renglones)} "
+                        f"backend={PLAYWRIGHT_BACKEND} "
                         f"updates={total_updates} batches={total_batches} "
                         f"retries={total_retries} "
+                        f"status={status_counts} errores_muestra={error_samples or ['-']} "
                         f"intervalo_real_por_renglon={cycle_total:.2f}s "
                         f"(modo={'INTENSIVA' if self.intensive_mode else 'SUEÑO'} "
                         f"poll_efectivo={effective_poll:.2f}s batch={batch_size} timeout={request_timeout_ms}ms)"
@@ -1007,9 +1107,10 @@ class PlaywrightCollector(BaseCollector):
                 ts = datetime.now().strftime("%H:%M:%S")
                 mode_txt = "INTENSIVA" if self.intensive_mode else "SUEÑO"
                 print(
-                    f"[{ts}] [PERF] ciclo={tick} modo={mode_txt} "
+                    f"[{ts}] [PERF] backend={PLAYWRIGHT_BACKEND} ciclo={tick} modo={mode_txt} "
                     f"dur={cycle_total:.2f}s updates={total_updates}/{len(renglones)} "
                     f"http_err={total_http_errors} timeouts={total_timeouts} "
+                    f"status={status_counts} errores={error_samples or ['-']} "
                     f"batch={batch_size} timeout={request_timeout_ms}ms retries={total_retries} "
                     f"poll_efectivo={effective_poll:.2f}s",
                     flush=True,

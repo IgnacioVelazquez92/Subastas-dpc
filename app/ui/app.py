@@ -76,7 +76,7 @@ class App(ctk.CTk):
         self.filter_search_text = tk.StringVar(value="")
         self.filter_search_text.trace_add("write", lambda *_: self._on_filter_changed())
         self.intensive_monitoring = tk.BooleanVar(value=True)
-        self.http_monitor_mode = tk.BooleanVar(value=False)
+        self.http_monitor_mode = tk.BooleanVar(value=bool(getattr(handles.runtime, "use_http_monitor", False)))
         self._row_led_timers: dict[str, str] = {}
         # Treeview no siempre renderiza bien emojis de color; usar glifos robustos.
         self._row_led_default = "○"
@@ -156,6 +156,13 @@ class App(ctk.CTk):
             width=100,
         ).pack(side="left", padx=4)
 
+        ctk.CTkButton(
+            control_frame,
+            text="Reanudar",
+            command=self.on_resume,
+            width=110,
+        ).pack(side="left", padx=4)
+
         # Menu de Opciones
         ctk.CTkButton(
             control_frame,
@@ -184,14 +191,6 @@ class App(ctk.CTk):
             variable=self.http_monitor_mode,
             command=self._on_toggle_http_monitor,
         ).pack(side="left", padx=8)
-
-        self.lbl_monitor_mode_hint = ctk.CTkLabel(
-            control_frame,
-            text="Cadencia LED: -",
-            font=ctk.CTkFont(size=10),
-            text_color="#666666",
-        )
-        self.lbl_monitor_mode_hint.pack(side="left", padx=8)
 
         # LEDs de estado
         leds_frame = ctk.CTkFrame(top, fg_color="transparent")
@@ -381,7 +380,9 @@ class App(ctk.CTk):
             "precio_unit_mejora", "renta_para_mejorar", "obs_cambio",
         ]
         self.col_mgr.load_visible_columns(default_cols)
+        self.http_monitor_mode.set(bool(getattr(self.handles.runtime, "use_http_monitor", False)))
         self._on_toggle_intensive_monitoring()
+        self._on_toggle_http_monitor()
         self._update_monitor_mode_hint()
 
         # Cargar mi_id_proveedor guardado
@@ -531,23 +532,7 @@ class App(ctk.CTk):
         self._schedule_row_led_settle(row.id_renglon, target_symbol, delay_ms=320)
 
     def _update_monitor_mode_hint(self) -> None:
-        if not self.lbl_monitor_mode_hint:
-            return
-        total_rows = max(0, len(self.rows))
-        poll_base = max(1.0, float(getattr(self.handles.runtime, "poll_seconds", 1.0)))
-        intensive = bool(self.intensive_monitoring.get())
-
-        if total_rows == 0:
-            text = "Cadencia LED: sin renglones capturados"
-        elif intensive:
-            text = f"INTENSIVA: {total_rows} renglones/ciclo, cada ~{poll_base:.1f}s"
-        else:
-            if total_rows == 1:
-                text = f"SUEÑO: 1 renglón/ciclo, cada ~{poll_base:.1f}s (igual a intensiva)"
-            else:
-                per_row = poll_base * total_rows
-                text = f"SUEÑO: 1 renglón/ciclo (~{poll_base:.1f}s). Cada renglón ~{per_row:.1f}s"
-        self.lbl_monitor_mode_hint.configure(text=text)
+        return
 
     # -------------------------
     # Event Loop
@@ -717,12 +702,13 @@ class App(ctk.CTk):
         if self.logger:
             if enabled:
                 self.logger.log(
-                    "⚡ HTTP Monitor ACTIVADO — próximo 'Capturar actual' usará httpx directo "
-                    "(latencia 0.2–2s). Playwright queda abierto para navegación."
+                    "⚡ HTTP Monitor ACTIVADO — backend prioritario: httpx directo. "
+                    "Si hay monitoreo activo, cambia en caliente; si no, se aplicará al iniciar."
                 )
             else:
                 self.logger.log(
-                    "HTTP Monitor desactivado — próximo 'Capturar actual' usará Playwright (Chromium)."
+                    "HTTP Monitor desactivado — backend prioritario: Playwright (Chromium). "
+                    "Respeta modo intensivo o sueño actual."
                 )
 
     def on_refresh_ui(self) -> None:
@@ -776,7 +762,14 @@ class App(ctk.CTk):
     def on_stop(self) -> None:
         """Pausa supervision sin cerrar la aplicacion."""
         self.handles.runtime.stop_collector()
-        self.logger.log("Supervision pausada. Reanuda con 'Abrir navegador' y luego 'Capturar actual'.")
+        self.logger.log("Supervisión pausada. Podés reanudar la subasta actual o navegar a otra y capturarla.")
+
+    def on_resume(self) -> None:
+        """Reanuda supervision usando la captura actual o la subasta abierta en navegador."""
+        self.handles.runtime.resume_collector()
+        self.logger.log(
+            "Reanudación solicitada. Si el navegador quedó en otra subasta, se recapturará antes de retomar."
+        )
 
     def on_start_browser(self) -> None:
         """Inicia collector según el modo (agnóstico a PLAYWRIGHT/MOCK)."""

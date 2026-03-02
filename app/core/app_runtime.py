@@ -395,12 +395,29 @@ class AppRuntime:
         except Exception as e:
             self.engine_out_q.put(info(EventType.EXCEPTION, f"No se pudo pausar collector: {e}"))
 
+    def resume_collector(self) -> None:
+        """
+        Reanuda el monitoreo sin reiniciar el runtime completo.
+        En PLAYWRIGHT reutiliza la captura actual y puede recapturar si el navegador quedó en otra subasta.
+        """
+        try:
+            if hasattr(self.collector, "resume_monitoring"):
+                self.collector.resume_monitoring()
+                self.engine_out_q.put(info(EventType.START, "Reanudación de monitoreo solicitada"))
+            elif not getattr(self.collector, "running", False):
+                self.collector.start()
+                self.engine_out_q.put(info(EventType.START, f"Collector iniciado (modo={self.mode})"))
+            else:
+                self.engine_out_q.put(info(EventType.HEARTBEAT, "El collector actual no soporta reanudación explícita"))
+        except Exception as e:
+            self.engine_out_q.put(info(EventType.EXCEPTION, f"No se pudo reanudar collector: {e}"))
+
     def set_http_monitor_mode(self, enabled: bool) -> None:
         """
         Activa o desactiva HttpMonitor en caliente.
         - ON:  httpx directo sin Chromium (rápido, 0.2-2s por ciclo).
         - OFF: Playwright Chromium clásico (fallback estable).
-        Efecto en el PRÓXIMO capture_current.
+        Si hay monitoreo activo, el cambio puede aplicar en caliente.
         """
         try:
             if hasattr(self.collector, "set_http_monitor_mode"):

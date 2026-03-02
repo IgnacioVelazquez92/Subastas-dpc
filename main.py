@@ -48,6 +48,11 @@ def main():
         default=1.0,
         help="Intervalo entre polling en segundos (default: 1.0)",
     )
+    parser.add_argument(
+        "--use-http-monitor",
+        action="store_true",
+        help="En modo PLAYWRIGHT, usa httpx directo para el polling luego de capturar la subasta",
+    )
     args = parser.parse_args()
 
     # Validar escenario solo en modo MOCK
@@ -71,6 +76,7 @@ def main():
         poll_seconds=args.poll_seconds,
         autostart_collector=False if args.mode == "PLAYWRIGHT" else True,
         scenario_path=str(scenario_path) if scenario_path else None,
+        use_http_monitor=bool(args.use_http_monitor),
     )
     handles = runtime.start()
 

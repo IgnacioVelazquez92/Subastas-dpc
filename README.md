@@ -1,12 +1,13 @@
 ﻿# Monitor de Subastas Electrónicas
 
-> **v1.0**  Aplicación de escritorio para el monitoreo avanzado de subastas electrónicas en tiempo real del portal e-Commerce de la provincia de Córdoba (Argentina).
+> **v1.1**  Aplicación de escritorio para el monitoreo avanzado de subastas electrónicas en tiempo real del portal e-Commerce de la provincia de Córdoba (Argentina).
 
 Proporciona una **interfaz visual moderna** como alternativa al portal oficial, con capacidades que el portal no ofrece:
 
 | Capacidad | Descripción |
 |---|---|
 | Seguimiento automático | Captura cambios de precio cada N segundos vía Playwright |
+| Polling HTTP directo | `HttpMonitor` usa `httpx` directo después de la captura inicial para bajar latencia |
 | Alertas configurables | Notificaciones visuales y sonoras ante cambios relevantes |
 | Gestión Excel | Importa costos, exporta resultados con columnas calculadas |
 | Histórico completo | Persiste todos los cambios y ofertas en SQLite |
@@ -22,6 +23,12 @@ Proporciona una **interfaz visual moderna** como alternativa al portal oficial, 
 
 ```bash
 python main.py --mode PLAYWRIGHT --poll-seconds 5
+```
+
+### Producción  Playwright + HttpMonitor
+
+```bash
+python main.py --mode PLAYWRIGHT --poll-seconds 1 --use-http-monitor
 ```
 
 ### Testing local  MOCK (escenarios ficticios)
@@ -63,12 +70,16 @@ La base de datos `data/monitor.db` también se crea automáticamente al ejecutar
 | `--scenario` | path |  | JSON de escenario (requerido en MOCK) |
 | `--poll-seconds` | float | `1.0` | Intervalo de polling en segundos |
 | `--headless` | flag | off | Playwright sin ventana de navegador |
+| `--use-http-monitor` | flag | off | Activa `httpx` directo para el polling luego de capturar la subasta |
 
 ### Ejemplos
 
 ```bash
 # Producción visible
 python main.py --mode PLAYWRIGHT --poll-seconds 5
+
+# Producción visible con httpx directo
+python main.py --mode PLAYWRIGHT --poll-seconds 1 --use-http-monitor
 
 # Producción headless
 python main.py --mode PLAYWRIGHT --headless --poll-seconds 10
@@ -112,6 +123,43 @@ python main.py --mode MOCK --scenario "data/test_scenarios/scenario_controlled_r
 
 **Principio clave:** cada capa solo conoce a la siguiente; la comunicación es via eventos tipados (`EventType`).
 
+### Backend de monitoreo en modo PLAYWRIGHT
+
+Hay dos backends posibles para el loop de polling:
+
+- `PLAYWRIGHT_PAGE`: hace `fetch` desde Chromium usando `page.evaluate(...)`.
+- `HTTPX_DIRECT`: usa `HttpMonitor` con `httpx` reutilizando cookies capturadas por Playwright.
+
+Regla vigente:
+
+- El switch `HTTP Monitor` de la UI tiene prioridad sobre el backend activo.
+- Si está activado, el collector usa `HTTPX_DIRECT`.
+- Si está desactivado, vuelve a `PLAYWRIGHT_PAGE`.
+- El cambio puede aplicarse en caliente si ya hay una subasta capturada y monitoreo activo.
+- El modo `INTENSIVA` / `SUEÑO` se mantiene independientemente del backend.
+
+### Ciclo operativo completo del MVP
+
+La UI ya soporta el flujo completo de trabajo:
+
+- `Abrir navegador`: abre o reutiliza la sesión de Playwright.
+- `Capturar actual`: toma la subasta visible en el navegador y empieza a monitorearla con el backend prioritario actual.
+- `Detener`: pausa la supervisión sin cerrar navegador ni perder la captura.
+- `Reanudar`: retoma la supervisión de la captura actual.
+
+Comportamiento al reanudar:
+
+- Si seguís parado en la misma subasta, reanuda directamente.
+- Si dejaste el navegador en otra subasta, el collector la recaptura antes de retomar.
+- Si no hay subasta capturada y tampoco estás parado en una subasta válida, la app te pide hacer `Capturar actual`.
+
+Importante:
+
+- Navegar manualmente a otra subasta en Chromium no cambia por sí solo la subasta monitoreada.
+- Para que el backend activo monitoree la nueva subasta, hay que hacer `Capturar actual` nuevamente.
+- Ese recapture refresca `id_cot`, `renglones`, `subasta_url` y cookies de sesión.
+- Si el monitoreo estaba pausado, `Reanudar` también puede hacer esa recaptura automáticamente si detecta otra subasta abierta.
+
 ### Eventos del sistema (`app/core/events.py`)
 
 | Evento | Emitido por | Descripción |
@@ -148,7 +196,8 @@ monitor_subastas/
     collector/
        base.py                # Interfaz BaseCollector
        mock_collector.py      # Collector MOCK -> SimulatorV2
-       playwright_collector.py# Collector producción (Chromium)
+       playwright_collector.py# Collector producción (Chromium + orquestación de backend)
+       http_monitor.py        # Polling HTTP directo con httpx
    
     db/
        database.py            # Clase Database: SQLite CRUD + init_schema
@@ -253,6 +302,28 @@ El modo de seguimiento activa alertas visuales y sonoras sobre un renglon:
 2. Marcar **"Seguir este renglon"**  Guardar
 
 El renglon pasa a estilo `TRACKED` (fondo celeste) y recibe alertas ante cambios significativos de precio.
+
+### Indicadores visuales
+
+- LED `HTTP`: parpadea ante respuestas exitosas y errores HTTP de ambos backends.
+- LED `Ofertas`: refleja cambios reales de oferta detectados por el sistema.
+- Columna `LED`: muestra actividad por renglón y también responde durante monitoreo por `httpx`.
+- Botón `Reanudar`: permite volver a supervisar sin reiniciar todo el runtime ni relanzar el navegador.
+
+### Logs operativos
+
+Los logs de consola identifican explícitamente el backend activo:
+
+```text
+[PERF] backend=PLAYWRIGHT_PAGE ...
+[HttpMonitor][PERF] backend=HTTPX_DIRECT ...
+```
+
+Esto permite confirmar rápido:
+
+- si el polling lo hace Chromium o `httpx`
+- si las requests están devolviendo `200`
+- si hubo errores, timeouts o cambios de backend
 
 ---
 

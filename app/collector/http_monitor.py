@@ -100,6 +100,15 @@ class HttpMonitor:
         self._stop_flag = False
         self._consecutive_auth_failures = 0
 
+    @staticmethod
+    def _cookie_debug_text(cookies: dict[str, str]) -> str:
+        names = sorted(str(name) for name in (cookies or {}).keys())
+        if not names:
+            return "cookies=0"
+        sample = ",".join(names[:4])
+        extra = "" if len(names) <= 4 else f"+{len(names) - 4}"
+        return f"cookies={len(names)} sample=[{sample}{extra}]"
+
     # --------------------------------
     # Control externo
     # --------------------------------
@@ -170,6 +179,11 @@ class HttpMonitor:
             f"[HttpMonitor] Iniciado: id_cot={id_cot} renglones={len(renglones)} "
             f"modo={mode_txt} poll={self.poll_seconds:.1f}s "
             f"concurrencia={self.concurrent_requests}"))
+        self.emit(info(
+            EventType.HEARTBEAT,
+            f"[HttpMonitor][SESSION] backend=HTTPX_DIRECT endpoint={ENDPOINT_BUSCAR_OFERTAS} "
+            f"id_cot={id_cot} referer={referer} {self._cookie_debug_text(cookies)}"
+        ))
 
         # httpx AsyncClient con connection pool persistente
         async with httpx.AsyncClient(
@@ -214,6 +228,8 @@ class HttpMonitor:
                 total_updates = 0
                 total_errors = 0
                 total_timeouts = 0
+                status_counts: dict[int, int] = {}
+                error_samples: list[str] = []
 
                 async def fetch_one(opt: dict) -> tuple[dict, int, dict | None, str | None]:
                     """Realiza un POST BuscarOfertas y devuelve (opt, status, body, error_kind)."""
@@ -259,6 +275,7 @@ class HttpMonitor:
 
                     rid = opt.get("value")
                     desc = opt.get("text") or ""
+                    status_counts[status] = status_counts.get(status, 0) + 1
 
                     # Detectar fallos de autenticación
                     if status in (401, 403):
@@ -273,6 +290,8 @@ class HttpMonitor:
                             f"[HttpMonitor] Auth error {status} renglon={rid}",
                             payload={"id_cot": id_cot, "id_renglon": rid, "desc": desc,
                                     "http_status": status, "error_kind": "auth_error"}))
+                        if len(error_samples) < 5:
+                            error_samples.append(f"{rid}:{status}:auth")
                         total_errors += 1
                         continue
 
@@ -289,6 +308,8 @@ class HttpMonitor:
                                 "error_kind": "timeout" if is_timeout else (error_kind or "network"),
                                 "error_message": error_kind or "",
                             }))
+                        if len(error_samples) < 5:
+                            error_samples.append(f"{rid}:{status}:{error_kind or 'error'}")
                         continue
 
                     # Respuesta OK — resetear contador de auth failures
@@ -356,9 +377,12 @@ class HttpMonitor:
 
                 # Métricas de ciclo (mismo formato que PlaywrightCollector)
                 self.emit(info(EventType.HEARTBEAT, (
-                    f"[HttpMonitor][METRICA] ciclo={tick} renglones={len(cycle_renglones)} "
+                    f"[HttpMonitor][METRICA] backend=HTTPX_DIRECT ciclo={tick} "
+                    f"renglones={len(cycle_renglones)} "
                     f"updates={total_updates} errores={total_errors} timeouts={total_timeouts} "
                     f"dur_real={elapsed:.3f}s ciclo_total={cycle_total:.2f}s "
+                    f"status={status_counts} "
+                    f"errores_muestra={error_samples or ['-']} "
                     f"(modo={'INTENSIVA' if self.intensive_mode else 'SUEÑO'} "
                     f"poll={effective_poll:.2f}s concurrencia={self.concurrent_requests})"
                 )))
@@ -367,10 +391,12 @@ class HttpMonitor:
                     ts = datetime.now().strftime("%H:%M:%S")
                     mode_log = "INTENSIVA" if self.intensive_mode else "SUEÑO"
                     print(
-                        f"[{ts}] [HttpMonitor][PERF] ciclo={tick} modo={mode_log} "
+                        f"[{ts}] [HttpMonitor][PERF] backend=HTTPX_DIRECT ciclo={tick} modo={mode_log} "
                         f"dur={elapsed:.3f}s ciclo={cycle_total:.2f}s "
                         f"updates={total_updates}/{len(cycle_renglones)} "
                         f"err={total_errors} timeouts={total_timeouts} "
+                        f"status={status_counts} "
+                        f"errores={error_samples or ['-']} "
                         f"conc={self.concurrent_requests} poll={effective_poll:.2f}s",
                         flush=True,
                     )
