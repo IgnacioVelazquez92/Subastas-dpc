@@ -354,17 +354,6 @@ class AppRuntime:
         )
         self.engine.refresh_mi_id_proveedor(subasta_id)
 
-
-        try:
-            if getattr(self.collector, "running", False):
-                # Si ya esta corriendo, en Playwright intentamos abrir listado.
-                if hasattr(self.collector, "open_listado"):
-                    self.collector.open_listado()
-                return
-            self.collector.start()
-        except Exception as e:
-            self.engine_out_q.put(info(EventType.EXCEPTION, f"Collector no pudo iniciar: {e}"))
-
     def start_collector(self) -> None:
         """
         Inicia (o reinicia) el collector sin reiniciar el runtime completo.

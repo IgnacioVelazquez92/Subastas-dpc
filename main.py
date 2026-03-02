@@ -2,18 +2,17 @@
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 
 from app.db.database import Database
 from app.core.app_runtime import AppRuntime
 from app.ui.app import App
 from app.utils.audio import ensure_default_sound
+from app.utils.app_paths import get_db_path, get_schema_path
 
 
 def bootstrap_db() -> Database:
-    project_root = Path(__file__).resolve().parent
-    db_path = project_root / "data" / "monitor.db"
-    schema_path = project_root / "app" / "db" / "schema.sql"
+    db_path = get_db_path()
+    schema_path = get_schema_path()
 
     db = Database(db_path)
     db.init_schema(schema_path)
@@ -28,7 +27,7 @@ def main():
         "--mode",
         type=str,
         choices=["MOCK", "PLAYWRIGHT"],
-        default="MOCK",
+        default="PLAYWRIGHT",
         help="Modo: MOCK (simulación con JSON) o PLAYWRIGHT (navegador real)",
     )
     parser.add_argument(
@@ -60,6 +59,7 @@ def main():
     if args.mode == "MOCK":
         if not args.scenario:
             parser.error("❌ --scenario es requerido en modo MOCK")
+        from pathlib import Path
         scenario_path = Path(args.scenario)
         if not scenario_path.exists():
             parser.error(f"❌ Escenario no encontrado: {scenario_path}")
