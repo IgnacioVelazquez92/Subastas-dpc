@@ -10,7 +10,7 @@ Proporciona una **interfaz visual moderna** como alternativa al portal oficial, 
 | Polling HTTP directo | `HttpMonitor` usa `httpx` directo después de la captura inicial para bajar latencia |
 | Alertas configurables | Notificaciones visuales y sonoras ante cambios relevantes |
 | Gestión Excel | Importa costos, exporta resultados con columnas calculadas |
-| Histórico completo | Persiste todos los cambios y ofertas en SQLite |
+| Persistencia optimizada | Guarda estado y eventos relevantes en SQLite sin inflar la base con ruido de polling |
 | Renglones compuestos | Contempla renglones con múltiples ítems usando `items_por_renglon` |
 | Filtros y ordenamiento | Vistas personalizadas, filtros rápidos, columnas configurables |
 | Modo testing | Escenarios JSON reproducibles para desarrollo sin portal real |
@@ -172,6 +172,31 @@ Importante:
 | `SECURITY` | Engine | Backoff activado por errores acumulados |
 | `START` / `STOP` / `END` | Engine | Ciclo de vida de la sesión |
 
+### Persistencia en SQLite
+
+El sistema no guarda todo el ruido operativo del monitoreo.
+
+Se persiste:
+
+- estado actual por renglón en `renglon_estado` mediante `upsert`
+- eventos relevantes de auditoría en `evento`
+
+No se persiste:
+
+- `HEARTBEAT` periódicos
+- `UPDATE` rutinarios sin cambio real
+- logs de consola `[PERF]` / `[HttpMonitor][PERF]`
+
+Sí se persiste en `evento`:
+
+- `SNAPSHOT`
+- `START`, `STOP`, `END`
+- `ALERT`
+- `SECURITY`
+- `HTTP_ERROR`
+- `EXCEPTION`
+- `UPDATE` sólo si hay cambio real de mercado (`changed=True`) o `outbid`
+
 ---
 
 ## Estructura del Proyecto
@@ -324,6 +349,8 @@ Esto permite confirmar rápido:
 - si el polling lo hace Chromium o `httpx`
 - si las requests están devolviendo `200`
 - si hubo errores, timeouts o cambios de backend
+
+Estos logs son operativos y van a consola; no se guardan masivamente en SQLite.
 
 ---
 

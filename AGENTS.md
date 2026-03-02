@@ -21,6 +21,9 @@
 - El modo `INTENSIVA` / `SUEÑO` se sigue respetando sin importar el backend.
 - Los logs de consola distinguen explícitamente `backend=HTTPX_DIRECT` vs `backend=PLAYWRIGHT_PAGE`.
 - El LED HTTP y el LED/pulso de actividad por renglón también responden a eventos emitidos por `HttpMonitor`.
+- La persistencia de observabilidad en SQLite fue reducida para evitar crecimiento excesivo de la tabla `evento`.
+- Ya no se persisten `HEARTBEAT` ni `UPDATE` rutinarios sin cambio real de mercado.
+- Se persisten solo eventos útiles para auditoría: `SNAPSHOT`, `START`, `STOP`, `END`, `ALERT`, `SECURITY`, `HTTP_ERROR`, `EXCEPTION` y `UPDATE` con `changed=True` o `outbid=True`.
 
 ---
 
@@ -317,6 +320,10 @@ Los estilos se definen en `alert_engine.py` y se aplican en `formatters.py`:
 - Simplicidad de instalación (no requiere setup adicional)
 - Suficiente para el volumen de datos (< 1000 renglones por subasta)
 
+Nota operativa vigente:
+- El estado actual de cada renglón se guarda por `upsert` en `renglon_estado`; no se apila una fila por cada poll.
+- La tabla `evento` ya no guarda ruido de polling continuo para evitar que horas de monitoreo generen una base desproporcionada.
+
 ### Por qué eventos tipados y no dicts
 
 - `EventType` + dataclasses evita bugs por typos en keys
@@ -402,6 +409,7 @@ Ver `docs/` para el historial completo:
 - Botón `Reanudar` agregado en la UI para cerrar el ciclo operativo del monitoreo
 - Logs de consola con backend explícito: `backend=HTTPX_DIRECT` o `backend=PLAYWRIGHT_PAGE`
 - El LED HTTP y la actividad visual por renglón ahora reflejan también updates/respuestas del backend `httpx`
+- Filtro de persistencia en `Engine._should_persist_event()` para no guardar `HEARTBEAT` ni `UPDATE` sin cambio en SQLite
 - `httpx[http2]>=0.27` agregado a `requirements.txt`
 - Soporte para `items_por_renglon` en capture, persistencia y UI
 - Cálculos unitarios/totales adaptados a renglones con múltiples ítems
