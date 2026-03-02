@@ -246,6 +246,8 @@ class Engine:
     # Persistencia de eventos (observabilidad)
     # -------------------------
     def _persist_event(self, ev: Event) -> None:
+        if not self._should_persist_event(ev):
+            return
         try:
             self.db.insert_evento(
                 nivel=str(ev.level.value),
@@ -256,6 +258,31 @@ class Engine:
             )
         except Exception:
             pass
+
+    @staticmethod
+    def _should_persist_event(ev: Event) -> bool:
+        """
+        Reduce ruido operativo en SQLite.
+
+        Persistimos solo eventos útiles para auditoría o diagnóstico:
+        - SNAPSHOT / START / STOP / END
+        - ALERT / SECURITY / HTTP_ERROR / EXCEPTION
+        - UPDATE solo si trae cambio real de mercado
+        """
+        if ev.type == EventType.UPDATE:
+            payload = ev.payload if isinstance(ev.payload, dict) else {}
+            return bool(payload.get("changed")) or bool(payload.get("outbid"))
+
+        return ev.type in {
+            EventType.SNAPSHOT,
+            EventType.ALERT,
+            EventType.SECURITY,
+            EventType.HTTP_ERROR,
+            EventType.EXCEPTION,
+            EventType.START,
+            EventType.STOP,
+            EventType.END,
+        }
 
     # -------------------------
     # SNAPSHOT
