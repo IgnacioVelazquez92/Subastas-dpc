@@ -27,6 +27,7 @@ class EventProcessor:
         status_label_setter,
         logger,
         audio_bell_fn,
+        my_provider_id_getter=None,
     ):
         """
         Args:
@@ -41,6 +42,7 @@ class EventProcessor:
         self.set_status = status_label_setter
         self.log = logger
         self.bell = audio_bell_fn
+        self.get_my_provider_id = my_provider_id_getter
         # Audio habilitado por defecto; se puede desactivar con MONITOR_ENABLE_SOUND=0
         self.sound_enabled = str(os.getenv("MONITOR_ENABLE_SOUND", "1")).strip().lower() in {
             "1", "true", "yes", "on"
@@ -320,6 +322,22 @@ class EventProcessor:
         row.oferta_mia_auto = bool(payload.get("oferta_mia_auto", row.oferta_mia_auto))
         if "mejor_id_proveedor" in payload:
             row.mejor_id_proveedor = payload.get("mejor_id_proveedor")
+        if self._matches_my_provider(row.mejor_id_proveedor):
+            row.oferta_mia_auto = True
+            row.oferta_mia = True
+
+    def _get_my_provider_id(self) -> str:
+        if not callable(self.get_my_provider_id):
+            return ""
+        try:
+            return str(self.get_my_provider_id() or "").strip()
+        except Exception:
+            return ""
+
+    def _matches_my_provider(self, provider_id: object) -> bool:
+        my_provider_id = self._get_my_provider_id()
+        best_provider_id = str(provider_id or "").strip()
+        return bool(my_provider_id and best_provider_id and best_provider_id == my_provider_id)
     
     def _apply_event_decorations(self, row: UIRow, payload: dict, ev: Event) -> str:
         """
@@ -332,6 +350,8 @@ class EventProcessor:
         sound = payload.get("sound") or SoundCue.NONE.value
         highlight = bool(payload.get("highlight", False))
         outbid = bool(payload.get("outbid", False))
+        if self._matches_my_provider(getattr(row, "mejor_id_proveedor", None)) and not outbid:
+            style = RowStyle.MY_OFFER.value
 
         # OUTBID → sonido WAV de alerta + log específico
         if outbid:

@@ -363,6 +363,7 @@ class App(ctk.CTk):
             status_label_setter=self._set_status,
             logger=self.logger.log,
             audio_bell_fn=self.bell,
+            my_provider_id_getter=self.handles.runtime.get_mi_id_proveedor,
         )
         # Registrar callbacks para LEDs
         self.event_processor.on_offer_changed = self.offer_led.on_offer_changed
