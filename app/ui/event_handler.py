@@ -221,7 +221,12 @@ class EventProcessor:
                 local_ts = local_update_dt.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
                 delta_txt = self._compute_offer_delta_txt(playwright_time=pw_ts, local_dt=local_update_dt)
                 prov_id = payload.get("mejor_id_proveedor")
-                prov_txt = str(prov_id).strip() if prov_id is not None and str(prov_id).strip() else "-"
+                prov_alias = str(payload.get("mejor_proveedor_txt") or "").strip()
+                prov_id_txt = str(prov_id).strip() if prov_id is not None and str(prov_id).strip() else ""
+                if prov_alias and prov_id_txt:
+                    prov_txt = f"{prov_alias} (id={prov_id_txt})"
+                else:
+                    prov_txt = prov_alias or prov_id_txt or "-"
                 self.log(
                     f"📊 [{rid}] {row.desc}: {old_mejor_txt} → {row.mejor_oferta_txt} | "
                     f"prov={prov_txt} | playwright={pw_ts or '-'} | local={local_ts} | delta={delta_txt}"
@@ -322,6 +327,8 @@ class EventProcessor:
         row.oferta_mia_auto = bool(payload.get("oferta_mia_auto", row.oferta_mia_auto))
         if "mejor_id_proveedor" in payload:
             row.mejor_id_proveedor = payload.get("mejor_id_proveedor")
+        if "mejor_proveedor_txt" in payload:
+            row.mejor_proveedor_txt = payload.get("mejor_proveedor_txt")
         if self._matches_my_provider(row.mejor_id_proveedor):
             row.oferta_mia_auto = True
             row.oferta_mia = True

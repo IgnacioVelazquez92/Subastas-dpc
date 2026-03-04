@@ -52,6 +52,12 @@ def main():
         action="store_true",
         help="En modo PLAYWRIGHT, usa httpx directo para el polling luego de capturar la subasta",
     )
+    parser.add_argument(
+        "--http-concurrent-requests",
+        type=int,
+        default=5,
+        help="Concurrencia maxima de requests en HttpMonitor (default: 5, max: 30)",
+    )
     args = parser.parse_args()
 
     # Validar escenario solo en modo MOCK
@@ -77,6 +83,7 @@ def main():
         autostart_collector=False if args.mode == "PLAYWRIGHT" else True,
         scenario_path=str(scenario_path) if scenario_path else None,
         use_http_monitor=bool(args.use_http_monitor),
+        http_concurrent_requests=max(1, min(30, int(args.http_concurrent_requests))),
     )
     handles = runtime.start()
 

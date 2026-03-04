@@ -1034,10 +1034,14 @@ class PlaywrightCollector(BaseCollector):
 
                     # Extraer id_proveedor de la mejor oferta (primera de la lista)
                     mejor_id_proveedor = None
+                    mejor_proveedor_txt = None
                     if ofertas:
                         raw = ofertas[0].get("id_proveedor")
                         if raw is not None:
                             mejor_id_proveedor = str(raw)
+                        proveedor_txt = ofertas[0].get("proveedor")
+                        if proveedor_txt is not None and str(proveedor_txt).strip():
+                            mejor_proveedor_txt = str(proveedor_txt).strip()
 
                     sig = f"{mejor_txt}|{oferta_min_txt}|{mensaje}"
                     changed = last_sig.get(rid) != sig
@@ -1069,6 +1073,7 @@ class PlaywrightCollector(BaseCollector):
                                 "mensaje": mensaje,
                                 "hora_ultima_oferta": hora_ultima_oferta,
                                 "mejor_id_proveedor": mejor_id_proveedor,
+                                "mejor_proveedor_txt": mejor_proveedor_txt,
                                 "ofertas": ofertas,
                                 "changed": changed,
                                 "http_status": 200,

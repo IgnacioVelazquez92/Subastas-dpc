@@ -193,3 +193,4 @@ class UIRow:
     oferta_mia: bool = False          # manual (usuario) o auto-detectado
     oferta_mia_auto: bool = False     # True = fue detectado automáticamente por mi_id_proveedor
     mejor_id_proveedor: Optional[str] = None   # id_proveedor de la mejor oferta actual
+    mejor_proveedor_txt: Optional[str] = None  # texto visible del portal, ej. "Prov. 30800700"

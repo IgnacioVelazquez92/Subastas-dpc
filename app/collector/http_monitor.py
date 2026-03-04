@@ -101,6 +101,23 @@ class HttpMonitor:
         self._consecutive_auth_failures = 0
 
     @staticmethod
+    def _pick_effective_concurrency(configured: int, total_rows: int) -> int:
+        """
+        Ajuste conservador para el portal real.
+
+        Este endpoint ASP.NET suele empeorar cuando se le dispara demasiada
+        concurrencia, aunque no devuelva errores. Limitamos la concurrencia
+        efectiva por ciclo para evitar colas internas del servidor.
+        """
+        n = max(1, int(total_rows))
+        configured = max(1, int(configured))
+        if n <= 12:
+            return min(configured, 3)
+        if n <= 24:
+            return min(configured, 4)
+        return min(configured, 6)
+
+    @staticmethod
     def _cookie_debug_text(cookies: dict[str, str]) -> str:
         names = sorted(str(name) for name in (cookies or {}).keys())
         if not names:
@@ -178,7 +195,7 @@ class HttpMonitor:
         self.emit(info(EventType.HEARTBEAT,
             f"[HttpMonitor] Iniciado: id_cot={id_cot} renglones={len(renglones)} "
             f"modo={mode_txt} poll={self.poll_seconds:.1f}s "
-            f"concurrencia={self.concurrent_requests}"))
+            f"concurrencia_cfg={self.concurrent_requests}"))
         self.emit(info(
             EventType.HEARTBEAT,
             f"[HttpMonitor][SESSION] backend=HTTPX_DIRECT endpoint={ENDPOINT_BUSCAR_OFERTAS} "
@@ -201,7 +218,8 @@ class HttpMonitor:
                 keepalive_expiry=30.0,
             ),
             verify=False,   # el portal usa cert auto-firmado frecuentemente
-            http2=True,     # HTTP/2 si el servidor lo soporta (reduce overhead)
+            # Este endpoint ASP.NET antiguo rinde mejor y más estable sobre H1.
+            http2=False,
         ) as client:
 
             while not self._stop_flag:
@@ -217,14 +235,19 @@ class HttpMonitor:
                 if self.intensive_mode:
                     cycle_renglones = list(renglones)
                     timeout_s = self.request_timeout_s
+                    effective_concurrency = self._pick_effective_concurrency(
+                        self.concurrent_requests,
+                        len(cycle_renglones),
+                    )
                 else:
                     idx = sleep_cursor % len(renglones)
                     sleep_cursor += 1
                     cycle_renglones = [renglones[idx]]
                     timeout_s = self.relaxed_timeout_s
+                    effective_concurrency = 1
 
                 # --- Peticiones en paralelo con semáforo ---
-                semaphore = asyncio.Semaphore(self.concurrent_requests)
+                semaphore = asyncio.Semaphore(effective_concurrency)
                 total_updates = 0
                 total_errors = 0
                 total_timeouts = 0
@@ -329,10 +352,14 @@ class HttpMonitor:
                     ofertas = parsed.get("ofertas") or []
 
                     mejor_id_proveedor = None
+                    mejor_proveedor_txt = None
                     if ofertas:
                         raw = ofertas[0].get("id_proveedor")
                         if raw is not None:
                             mejor_id_proveedor = str(raw)
+                        proveedor_txt = ofertas[0].get("proveedor")
+                        if proveedor_txt is not None and str(proveedor_txt).strip():
+                            mejor_proveedor_txt = str(proveedor_txt).strip()
 
                     sig = f"{mejor_txt}|{oferta_min_txt}|{mensaje}"
                     changed = last_sig.get(rid) != sig
@@ -357,6 +384,7 @@ class HttpMonitor:
                         "mensaje": mensaje,
                         "hora_ultima_oferta": hora_ultima_oferta,
                         "mejor_id_proveedor": mejor_id_proveedor,
+                        "mejor_proveedor_txt": mejor_proveedor_txt,
                         "ofertas": ofertas,
                         "changed": changed,
                         "http_status": 200,
@@ -384,7 +412,7 @@ class HttpMonitor:
                     f"status={status_counts} "
                     f"errores_muestra={error_samples or ['-']} "
                     f"(modo={'INTENSIVA' if self.intensive_mode else 'SUEÑO'} "
-                    f"poll={effective_poll:.2f}s concurrencia={self.concurrent_requests})"
+                    f"poll={effective_poll:.2f}s concurrencia={effective_concurrency}/{self.concurrent_requests})"
                 )))
 
                 if self.console_perf_logs:
@@ -397,7 +425,7 @@ class HttpMonitor:
                         f"err={total_errors} timeouts={total_timeouts} "
                         f"status={status_counts} "
                         f"errores={error_samples or ['-']} "
-                        f"conc={self.concurrent_requests} poll={effective_poll:.2f}s",
+                        f"conc={effective_concurrency}/{self.concurrent_requests} poll={effective_poll:.2f}s",
                         flush=True,
                     )
 
