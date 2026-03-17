@@ -42,6 +42,7 @@ from playwright.async_api import async_playwright, TimeoutError as PWTimeoutErro
 
 from app.collector.base import BaseCollector
 from app.core.events import EventType, info, warn, error, debug, Event
+from app.utils.app_paths import get_bundled_chromium_executable
 from app.utils.renglon_math import resolve_cantidad_equivalente
 from app.utils.money import money_to_float
 
@@ -212,7 +213,15 @@ class PlaywrightCollector(BaseCollector):
 
             async def _create_browser_session():
                 try:
-                    _browser = await p.chromium.launch(headless=self.headless)
+                    launch_kwargs = {"headless": self.headless}
+                    bundled_chromium = get_bundled_chromium_executable()
+                    if bundled_chromium and bundled_chromium.exists():
+                        launch_kwargs["executable_path"] = str(bundled_chromium)
+                        self.emit(info(
+                            EventType.HEARTBEAT,
+                            f"Usando Chromium embebido: {bundled_chromium}",
+                        ))
+                    _browser = await p.chromium.launch(**launch_kwargs)
                     _ctx = await _browser.new_context(ignore_https_errors=True)
                     _page = await _ctx.new_page()
 

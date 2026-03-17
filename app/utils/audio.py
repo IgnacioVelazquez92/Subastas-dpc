@@ -17,9 +17,10 @@ import sys
 import threading
 from pathlib import Path
 
-# Ruta base del proyecto (dos niveles arriba de este archivo)
-_BASE_DIR = Path(__file__).resolve().parent.parent.parent
-SOUNDS_DIR = _BASE_DIR / "assets" / "sounds"
+from app.utils.app_paths import get_sounds_dir
+
+
+SOUNDS_DIR = get_sounds_dir()
 OUTBID_SOUND_MP3 = SOUNDS_DIR / "outbid_alert.mp3"
 OUTBID_SOUND_WAV = SOUNDS_DIR / "outbid_alert.wav"
 
