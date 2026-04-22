@@ -282,6 +282,17 @@ class App(ctk.CTk):
             font=ctk.CTkFont(size=11, weight="bold"),
         ).pack(side="left", padx=(6, 4))
 
+        self._mi_id_1_color_badge = ctk.CTkLabel(
+            prov_bar,
+            text="ID 1",
+            width=48,
+            corner_radius=6,
+            fg_color="#5B9BD5",
+            text_color="#FFFFFF",
+            font=ctk.CTkFont(size=10, weight="bold"),
+        )
+        self._mi_id_1_color_badge.pack(side="left", padx=(4, 2))
+
         self._mi_id_prov_1_var = tk.StringVar(value="")
         self._mi_id_prov_1_entry = ctk.CTkEntry(
             prov_bar,
@@ -292,6 +303,17 @@ class App(ctk.CTk):
         self._mi_id_prov_1_entry.pack(side="left", padx=4)
         self._mi_id_prov_1_entry.bind("<Return>", lambda _e: self._save_mi_id_proveedor())
 
+        self._mi_id_2_color_badge = ctk.CTkLabel(
+            prov_bar,
+            text="ID 2",
+            width=48,
+            corner_radius=6,
+            fg_color="#1F7A8C",
+            text_color="#FFFFFF",
+            font=ctk.CTkFont(size=10, weight="bold"),
+        )
+        self._mi_id_2_color_badge.pack(side="left", padx=(8, 2))
+
         self._mi_id_prov_2_var = tk.StringVar(value="")
         self._mi_id_prov_2_entry = ctk.CTkEntry(
             prov_bar,
@@ -301,6 +323,27 @@ class App(ctk.CTk):
         )
         self._mi_id_prov_2_entry.pack(side="left", padx=4)
         self._mi_id_prov_2_entry.bind("<Return>", lambda _e: self._save_mi_id_proveedor())
+
+        self._mi_id_3_color_badge = ctk.CTkLabel(
+            prov_bar,
+            text="ID 3",
+            width=48,
+            corner_radius=6,
+            fg_color="#8A5CF6",
+            text_color="#FFFFFF",
+            font=ctk.CTkFont(size=10, weight="bold"),
+        )
+        self._mi_id_3_color_badge.pack(side="left", padx=(8, 2))
+
+        self._mi_id_prov_3_var = tk.StringVar(value="")
+        self._mi_id_prov_3_entry = ctk.CTkEntry(
+            prov_bar,
+            textvariable=self._mi_id_prov_3_var,
+            placeholder_text="ID propio 3",
+            width=160,
+        )
+        self._mi_id_prov_3_entry.pack(side="left", padx=4)
+        self._mi_id_prov_3_entry.bind("<Return>", lambda _e: self._save_mi_id_proveedor())
 
         ctk.CTkButton(
             prov_bar,
@@ -514,11 +557,11 @@ class App(ctk.CTk):
             return
 
         alert_engine = AlertEngine()
-        provider_ids = {
+        provider_ids = [
             str(value).strip()
             for value in (my_provider_id or "").split("|")
             if str(value).strip()
-        }
+        ]
 
         for row in self.rows.values():
             prev_auto = bool(getattr(row, "oferta_mia_auto", False))
@@ -528,8 +571,10 @@ class App(ctk.CTk):
             if auto_match:
                 row.oferta_mia_auto = True
                 row.oferta_mia = True
+                row.oferta_mia_slot = provider_ids.index(best_provider) + 1
             else:
                 row.oferta_mia_auto = False
+                row.oferta_mia_slot = None
                 if prev_auto:
                     row.oferta_mia = False
             row.ultimo_oferente_txt = self.handles.runtime.resolve_provider_label(best_provider) if best_provider else ""
@@ -562,8 +607,16 @@ class App(ctk.CTk):
                 outbid=False,
             )
 
+            style_value = decision.style.value
+            if row.oferta_mia_auto:
+                if row.oferta_mia_slot == 1:
+                    style_value = RowStyle.MY_OFFER_1.value
+                elif row.oferta_mia_slot == 2:
+                    style_value = RowStyle.MY_OFFER_2.value
+                elif row.oferta_mia_slot == 3:
+                    style_value = RowStyle.MY_OFFER_3.value
             row_values = DisplayValues.build_row_values(row)
-            self.table_mgr.render_row(row.id_renglon, row_values, decision.style.value)
+            self.table_mgr.render_row(row.id_renglon, row_values, style_value)
 
     def _set_row_led_symbol(self, row: UIRow, symbol: str) -> None:
         new_value = symbol
@@ -717,6 +770,7 @@ class App(ctk.CTk):
             if values:
                 self._mi_id_prov_1_var.set(values[0] if len(values) > 0 else "")
                 self._mi_id_prov_2_var.set(values[1] if len(values) > 1 else "")
+                self._mi_id_prov_3_var.set(values[2] if len(values) > 2 else "")
                 self._lbl_mi_prov_status.configure(
                     text=f"Activos: {', '.join(values)}",
                     text_color="#5B9BD5",
@@ -728,12 +782,14 @@ class App(ctk.CTk):
         """Guarda IDs propios ingresados y actualiza el engine."""
         value_1 = self._mi_id_prov_1_var.get().strip()
         value_2 = self._mi_id_prov_2_var.get().strip()
+        value_3 = self._mi_id_prov_3_var.get().strip()
         try:
             self.handles.runtime.set_mis_ids_proveedor(
                 value_1 if value_1 else None,
                 value_2 if value_2 else None,
+                value_3 if value_3 else None,
             )
-            values = tuple(value for value in (value_1, value_2) if value)
+            values = tuple(value for value in (value_1, value_2, value_3) if value)
             self._reapply_offer_identity_styles("|".join(values))
             if values:
                 self._lbl_mi_prov_status.configure(

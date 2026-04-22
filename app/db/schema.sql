@@ -24,7 +24,8 @@ CREATE TABLE IF NOT EXISTS subasta (
     err_streak      INTEGER NOT NULL DEFAULT 0, -- errores consecutivos (seguridad)
     mi_id_proveedor TEXT,                       -- LEGACY: primer ID propio (compatibilidad)
     mi_id_proveedor_1 TEXT,                     -- ID propio 1 para esta subasta
-    mi_id_proveedor_2 TEXT                      -- ID propio 2 para esta subasta
+    mi_id_proveedor_2 TEXT,                     -- ID propio 2 para esta subasta
+    mi_id_proveedor_3 TEXT                      -- ID propio 3 para esta subasta
 );
 
 CREATE INDEX IF NOT EXISTS idx_subasta_estado ON subasta(estado);

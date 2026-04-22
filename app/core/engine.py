@@ -687,10 +687,12 @@ class Engine:
             self._mi_id_proveedor_cache[subasta_id] = self.db.get_mis_ids_proveedor(subasta_id=subasta_id)
         my_provider_ids = self._mi_id_proveedor_cache.get(subasta_id, ())
         matched_my_provider_id = None
+        matched_my_provider_slot = None
         if mejor_id_proveedor is not None:
             best_provider_id = str(mejor_id_proveedor).strip()
             if best_provider_id and best_provider_id in my_provider_ids:
                 matched_my_provider_id = best_provider_id
+                matched_my_provider_slot = my_provider_ids.index(best_provider_id) + 1
 
         # Determinar si la mejor oferta es nuestra
         oferta_mia_auto = matched_my_provider_id is not None
@@ -895,6 +897,7 @@ class Engine:
                     "oferta_mia_auto": bool(oferta_mia_auto),
                     "outbid": bool(outbid),
                     "matched_my_provider_id": matched_my_provider_id,
+                    "matched_my_provider_slot": matched_my_provider_slot,
                     "outbid_my_provider_id": prev_matching_my_provider_id if outbid else None,
                     "mejor_id_proveedor": mejor_id_proveedor,
                     "utilidad_min_pct": utilidad_min_pct,

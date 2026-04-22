@@ -37,6 +37,7 @@ class Subasta:
     mi_id_proveedor: Optional[str] = None  # LEGACY: primer ID proveedor propio
     mi_id_proveedor_1: Optional[str] = None
     mi_id_proveedor_2: Optional[str] = None
+    mi_id_proveedor_3: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -194,6 +195,7 @@ class UIRow:
     seguir: bool = False
     oferta_mia: bool = False          # manual (usuario) o auto-detectado
     oferta_mia_auto: bool = False     # True = fue detectado automáticamente por mi_id_proveedor
+    oferta_mia_slot: Optional[int] = None  # 1, 2 o 3 segun el ID propio que coincide
     mejor_id_proveedor: Optional[str] = None   # id_proveedor de la mejor oferta actual
     mejor_proveedor_txt: Optional[str] = None  # texto visible del portal, ej. "Prov. 30800700"
     ultimo_oferente_txt: Optional[str] = None  # alias/id resuelto del mejor oferente actual

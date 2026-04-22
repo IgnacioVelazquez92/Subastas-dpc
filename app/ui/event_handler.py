@@ -276,6 +276,7 @@ class EventProcessor:
             row.seguir,
             row.oferta_mia,
             getattr(row, "oferta_mia_auto", False),
+            getattr(row, "oferta_mia_slot", None),
             getattr(row, "mejor_id_proveedor", None),
         )
     
@@ -331,6 +332,9 @@ class EventProcessor:
         row.seguir = bool(payload.get("seguir", row.seguir))
         row.oferta_mia = bool(payload.get("oferta_mia", row.oferta_mia))
         row.oferta_mia_auto = bool(payload.get("oferta_mia_auto", row.oferta_mia_auto))
+        matched_slot = payload.get("matched_my_provider_slot")
+        if matched_slot in (1, 2, 3):
+            row.oferta_mia_slot = int(matched_slot)
         if "mejor_id_proveedor" in payload:
             row.mejor_id_proveedor = payload.get("mejor_id_proveedor")
         if "mejor_proveedor_txt" in payload:
@@ -342,6 +346,10 @@ class EventProcessor:
         if self._matches_my_provider(row.mejor_id_proveedor):
             row.oferta_mia_auto = True
             row.oferta_mia = True
+            if row.oferta_mia_slot not in (1, 2, 3):
+                row.oferta_mia_slot = self._resolve_my_provider_slot(row.mejor_id_proveedor)
+        else:
+            row.oferta_mia_slot = None
 
     def _get_my_provider_ids(self) -> set[str]:
         if not callable(self.get_my_provider_ids):
@@ -364,6 +372,23 @@ class EventProcessor:
         my_provider_ids = self._get_my_provider_ids()
         best_provider_id = str(provider_id or "").strip()
         return bool(my_provider_ids and best_provider_id and best_provider_id in my_provider_ids)
+
+    def _resolve_my_provider_slot(self, provider_id: object) -> int | None:
+        raw = str(provider_id or "").strip()
+        if not raw or not callable(self.get_my_provider_ids):
+            return None
+        try:
+            values = self.get_my_provider_ids() or ()
+        except Exception:
+            return None
+        if isinstance(values, str):
+            ordered_ids = [str(values).strip()] if str(values).strip() else []
+        else:
+            ordered_ids = [str(item).strip() for item in values if str(item).strip()]
+        for idx, provider in enumerate(ordered_ids, start=1):
+            if provider == raw:
+                return idx
+        return None
 
     def _resolve_provider_label(self, provider_id: object) -> str:
         raw = str(provider_id or "").strip()
@@ -400,7 +425,7 @@ class EventProcessor:
         highlight = bool(payload.get("highlight", False))
         outbid = bool(payload.get("outbid", False))
         if self._matches_my_provider(getattr(row, "mejor_id_proveedor", None)) and not outbid:
-            style = RowStyle.MY_OFFER.value
+            style = self._resolve_my_offer_style(row).value
 
         # OUTBID → sonido WAV de alerta + log específico
         if outbid:
@@ -430,6 +455,17 @@ class EventProcessor:
                 pass
 
         return style
+
+    @staticmethod
+    def _resolve_my_offer_style(row: UIRow) -> RowStyle:
+        slot = getattr(row, "oferta_mia_slot", None)
+        if slot == 1:
+            return RowStyle.MY_OFFER_1
+        if slot == 2:
+            return RowStyle.MY_OFFER_2
+        if slot == 3:
+            return RowStyle.MY_OFFER_3
+        return RowStyle.MY_OFFER
 
     def _cancel_outbid_blink(self, rid: str) -> None:
         jobs = self._outbid_blink_jobs.pop(rid, [])

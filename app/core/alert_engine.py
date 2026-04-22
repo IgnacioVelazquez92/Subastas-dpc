@@ -29,6 +29,9 @@ class RowStyle(str, Enum):
     DANGER = "DANGER"        # alerta roja
     SUCCESS = "SUCCESS"      # oferta mía / situación positiva
     MY_OFFER = "MY_OFFER"    # oferta propia (detectada por mi_id_proveedor) → #5B9BD5
+    MY_OFFER_1 = "MY_OFFER_1"  # oferta correspondiente al ID propio 1
+    MY_OFFER_2 = "MY_OFFER_2"  # oferta correspondiente al ID propio 2
+    MY_OFFER_3 = "MY_OFFER_3"  # oferta correspondiente al ID propio 3
     OUTBID = "OUTBID"        # oferta propia superada por otro → alerta naranja
 
 

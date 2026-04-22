@@ -351,7 +351,7 @@ class AppRuntime:
         return self.db.get_mi_id_proveedor(subasta_id=subasta_id)
 
     def get_mis_ids_proveedor(self) -> tuple[str, ...]:
-        """Devuelve IDs propios 1/2 de la subasta activa (o más reciente)."""
+        """Devuelve IDs propios 1/2/3 de la subasta activa (o más reciente)."""
         subasta_id = self.db.get_running_subasta_id() or self.db.get_latest_subasta_id()
         if not subasta_id:
             return ()
@@ -359,10 +359,10 @@ class AppRuntime:
 
     def set_mi_id_proveedor(self, value: str | None) -> None:
         """Compatibilidad: guarda solo el primer ID propio."""
-        self.set_mis_ids_proveedor(value, None)
+        self.set_mis_ids_proveedor(value, None, None)
 
-    def set_mis_ids_proveedor(self, value_1: str | None, value_2: str | None) -> None:
-        """Guarda IDs propios 1/2 en la subasta activa (o más reciente) e invalida cache del engine."""
+    def set_mis_ids_proveedor(self, value_1: str | None, value_2: str | None, value_3: str | None) -> None:
+        """Guarda IDs propios 1/2/3 en la subasta activa (o más reciente) e invalida cache del engine."""
         subasta_id = self.db.get_running_subasta_id() or self.db.get_latest_subasta_id()
         if not subasta_id:
             return
@@ -370,6 +370,7 @@ class AppRuntime:
             subasta_id=subasta_id,
             mi_id_proveedor_1=value_1.strip() if value_1 and value_1.strip() else None,
             mi_id_proveedor_2=value_2.strip() if value_2 and value_2.strip() else None,
+            mi_id_proveedor_3=value_3.strip() if value_3 and value_3.strip() else None,
         )
         self.engine.refresh_mi_id_proveedor(subasta_id)
 

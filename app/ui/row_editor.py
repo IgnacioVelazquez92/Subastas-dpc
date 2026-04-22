@@ -695,6 +695,17 @@ class RowEditorDialog:
             mejor_id_proveedor is not None
             and str(mejor_id_proveedor).strip() in my_provider_ids
         )
+        oferta_mia_slot = None
+        if oferta_mia_auto and mejor_id_proveedor is not None:
+            ordered_ids = [
+                str(value).strip()
+                for value in self.db_runtime.get_mis_ids_proveedor()
+                if str(value).strip()
+            ]
+            try:
+                oferta_mia_slot = ordered_ids.index(str(mejor_id_proveedor).strip()) + 1
+            except Exception:
+                oferta_mia_slot = None
         if oferta_mia_auto:
             oferta_mia = True
 
@@ -719,6 +730,13 @@ class RowEditorDialog:
             http_status=200,
             mensaje="",
         )
+        if oferta_mia_auto:
+            if oferta_mia_slot == 1:
+                return RowStyle.MY_OFFER_1.value
+            if oferta_mia_slot == 2:
+                return RowStyle.MY_OFFER_2.value
+            if oferta_mia_slot == 3:
+                return RowStyle.MY_OFFER_3.value
         return decision.style.value
 
     @staticmethod

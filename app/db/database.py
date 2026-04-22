@@ -107,6 +107,8 @@ class Database:
             self.execute("ALTER TABLE subasta ADD COLUMN mi_id_proveedor_1 TEXT")
         if "mi_id_proveedor_2" not in existing_subasta_cols:
             self.execute("ALTER TABLE subasta ADD COLUMN mi_id_proveedor_2 TEXT")
+        if "mi_id_proveedor_3" not in existing_subasta_cols:
+            self.execute("ALTER TABLE subasta ADD COLUMN mi_id_proveedor_3 TEXT")
 
     def init_schema(self, schema_path: str | Path) -> None:
         """
@@ -261,13 +263,14 @@ class Database:
             subasta_id=subasta_id,
             mi_id_proveedor_1=mi_id_proveedor,
             mi_id_proveedor_2=None,
+            mi_id_proveedor_3=None,
         )
 
     def get_mis_ids_proveedor(self, *, subasta_id: int) -> tuple[str, ...]:
         """Devuelve IDs propios configurados para la subasta, sin duplicados y preservando orden."""
         row = self.fetchone(
             """
-            SELECT mi_id_proveedor, mi_id_proveedor_1, mi_id_proveedor_2
+            SELECT mi_id_proveedor, mi_id_proveedor_1, mi_id_proveedor_2, mi_id_proveedor_3
             FROM subasta
             WHERE id = ?
             """,
@@ -279,6 +282,7 @@ class Database:
         values = [
             row["mi_id_proveedor_1"],
             row["mi_id_proveedor_2"],
+            row["mi_id_proveedor_3"],
             row["mi_id_proveedor"],
         ]
         seen: set[str] = set()
@@ -297,21 +301,33 @@ class Database:
         subasta_id: int,
         mi_id_proveedor_1: str | None,
         mi_id_proveedor_2: str | None,
+        mi_id_proveedor_3: str | None,
     ) -> None:
-        """Guarda los dos IDs propios de la subasta y mantiene compatibilidad legacy."""
+        """Guarda los IDs propios de la subasta y mantiene compatibilidad legacy."""
         value_1 = str(mi_id_proveedor_1 or "").strip() or None
         value_2 = str(mi_id_proveedor_2 or "").strip() or None
-        if value_1 and value_2 and value_1 == value_2:
-            value_2 = None
+        value_3 = str(mi_id_proveedor_3 or "").strip() or None
+        ordered_values = [value_1, value_2, value_3]
+        seen: set[str] = set()
+        deduped: list[str | None] = []
+        for value in ordered_values:
+            if value and value in seen:
+                deduped.append(None)
+                continue
+            if value:
+                seen.add(value)
+            deduped.append(value)
+        value_1, value_2, value_3 = deduped
         self.execute(
             """
             UPDATE subasta
             SET mi_id_proveedor = ?,
                 mi_id_proveedor_1 = ?,
-                mi_id_proveedor_2 = ?
+                mi_id_proveedor_2 = ?,
+                mi_id_proveedor_3 = ?
             WHERE id = ?
             """,
-            (value_1, value_1, value_2, subasta_id),
+            (value_1, value_1, value_2, value_3, subasta_id),
         )
 
     def get_mi_id_proveedor_by_id_cot(self, *, id_cot: str) -> str | None:
