@@ -91,6 +91,13 @@ class Database:
                 col_type = "TEXT" if col in ["obs_usuario", "mejor_oferta_txt", "obs_cambio"] else "REAL"
                 self.execute(f"ALTER TABLE renglon_excel ADD COLUMN {col} {col_type}")
 
+        estado_cols = self.fetchall("PRAGMA table_info(renglon_estado)")
+        existing_estado_cols = {c[1] for c in estado_cols}
+        if "mejor_id_proveedor" not in existing_estado_cols:
+            self.execute("ALTER TABLE renglon_estado ADD COLUMN mejor_id_proveedor TEXT")
+        if "mejor_proveedor_txt" not in existing_estado_cols:
+            self.execute("ALTER TABLE renglon_estado ADD COLUMN mejor_proveedor_txt TEXT")
+
         # Migración tabla subasta: columna mi_id_proveedor
         subasta_cols = self.fetchall("PRAGMA table_info(subasta)")
         existing_subasta_cols = {c[1] for c in subasta_cols}
@@ -456,6 +463,9 @@ class Database:
                 e.precio_ref_unitario AS precio_ref_unitario,
                 e.renta_referencia AS renta_referencia,
                 st.mejor_oferta_txt AS mejor_oferta_txt,
+                st.mejor_id_proveedor AS mejor_id_proveedor,
+                pa.alias AS mejor_proveedor_alias,
+                st.mejor_proveedor_txt AS mejor_proveedor_txt,
                 e.oferta_para_mejorar AS oferta_para_mejorar,
                 e.precio_unit_mejora AS precio_unit_mejora,
                 e.renta_para_mejorar AS renta_para_mejorar,
@@ -464,6 +474,7 @@ class Database:
             JOIN subasta s ON s.id = r.subasta_id
             LEFT JOIN renglon_excel e ON e.renglon_id = r.id
             LEFT JOIN renglon_estado st ON st.renglon_id = r.id
+            LEFT JOIN proveedor_alias pa ON pa.id_proveedor = st.mejor_id_proveedor AND pa.activo = 1
             WHERE r.subasta_id = ?
             ORDER BY r.id_renglon
             """,
@@ -499,6 +510,9 @@ class Database:
                     "PRECIO DE REFERENCIA": row["precio_ref_unitario"],
                     "RENTA REFERENCIA %": row["renta_referencia"],
                     "MEJOR OFERTA ACTUAL": row["mejor_oferta_txt"],
+                    "ULTIMO OFERENTE ID": row["mejor_id_proveedor"],
+                    "ULTIMO OFERENTE ALIAS": row["mejor_proveedor_alias"],
+                    "ULTIMO OFERENTE PORTAL": row["mejor_proveedor_txt"],
                     "OFERTA PARA MEJORAR": row["oferta_para_mejorar"],
                     "PRECIO UNIT MEJORA": row["precio_unit_mejora"],
                     "RENTA PARA MEJORAR %": row["renta_para_mejorar"],
@@ -517,6 +531,8 @@ class Database:
         mejor: float | None,
         oferta_min: float | None,
         presupuesto: float | None,
+        mejor_id_proveedor: str | None,
+        mejor_proveedor_txt: str | None,
         mensaje: str | None,
         updated_at: str,
     ) -> None:
@@ -538,6 +554,8 @@ class Database:
                     mejor_oferta     = ?,
                     oferta_min       = ?,
                     presupuesto      = ?,
+                    mejor_id_proveedor = ?,
+                    mejor_proveedor_txt = ?,
                     mensaje          = ?,
                     updated_at       = ?
                 WHERE renglon_id = ?
@@ -549,6 +567,8 @@ class Database:
                     mejor,
                     oferta_min,
                     presupuesto,
+                    mejor_id_proveedor,
+                    mejor_proveedor_txt,
                     mensaje,
                     updated_at,
                     renglon_id,
@@ -561,8 +581,9 @@ class Database:
                     renglon_id,
                     mejor_oferta_txt, oferta_min_txt, presupuesto_txt,
                     mejor_oferta, oferta_min, presupuesto,
+                    mejor_id_proveedor, mejor_proveedor_txt,
                     mensaje, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     renglon_id,
@@ -572,6 +593,8 @@ class Database:
                     mejor,
                     oferta_min,
                     presupuesto,
+                    mejor_id_proveedor,
+                    mejor_proveedor_txt,
                     mensaje,
                     updated_at,
                 ),

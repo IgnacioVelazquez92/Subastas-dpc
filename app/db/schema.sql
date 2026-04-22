@@ -66,6 +66,8 @@ CREATE TABLE IF NOT EXISTS renglon_estado (
     mejor_oferta        REAL,                      -- 20115680.0
     oferta_min          REAL,                      -- 20015101.6
     presupuesto         REAL,                      -- 21696480.0
+    mejor_id_proveedor  TEXT,                      -- ID del proveedor lider actual
+    mejor_proveedor_txt TEXT,                      -- texto visible del portal del proveedor lider
 
     mensaje             TEXT,                      -- estado del portal
     updated_at          TEXT NOT NULL DEFAULT (datetime('now')),

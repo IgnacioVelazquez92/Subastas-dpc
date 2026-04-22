@@ -270,6 +270,7 @@ class EventProcessor:
             row.renta_para_mejorar,
             row.oferta_para_mejorar,
             row.mejor_oferta_txt,
+            getattr(row, "ultimo_oferente_txt", None),
             getattr(row, "oferta_min_txt", None),
             row.obs_cambio,
             row.seguir,
@@ -334,6 +335,10 @@ class EventProcessor:
             row.mejor_id_proveedor = payload.get("mejor_id_proveedor")
         if "mejor_proveedor_txt" in payload:
             row.mejor_proveedor_txt = payload.get("mejor_proveedor_txt")
+        row.ultimo_oferente_txt = self._build_provider_display(
+            provider_id=row.mejor_id_proveedor,
+            provider_txt=row.mejor_proveedor_txt,
+        )
         if self._matches_my_provider(row.mejor_id_proveedor):
             row.oferta_mia_auto = True
             row.oferta_mia = True
@@ -372,6 +377,16 @@ class EventProcessor:
             except Exception:
                 pass
         return raw
+
+    def _build_provider_display(self, *, provider_id: object, provider_txt: object) -> str:
+        raw_id = str(provider_id or "").strip()
+        portal_txt = str(provider_txt or "").strip()
+        resolved = self._resolve_provider_label(provider_id)
+        if resolved and resolved != "-" and resolved != raw_id:
+            return resolved
+        if portal_txt and raw_id:
+            return f"{portal_txt} (id={raw_id})"
+        return portal_txt or raw_id or ""
     
     def _apply_event_decorations(self, row: UIRow, payload: dict, ev: Event) -> str:
         """

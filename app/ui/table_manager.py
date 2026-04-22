@@ -65,7 +65,7 @@ class TableConfig:
         # Referencia de subasta
         "precio_referencia", "precio_ref_unitario", "renta_referencia",
         # Mejora en subasta
-        "mejor_oferta", "oferta_para_mejorar",
+        "mejor_oferta", "ultimo_oferente", "oferta_para_mejorar",
         "precio_unit_mejora", "renta_para_mejorar",
         # Observaciones
         "obs_cambio",
@@ -100,6 +100,7 @@ class TableConfig:
                 "precio_ref_unitario": "Precio de\nReferencia",
                 "renta_referencia": "Renta\nReferencia %",
                 "mejor_oferta": "Mejor\nOferta",
+                "ultimo_oferente": "Ultimo\nOferente",
                 "oferta_para_mejorar": "Oferta a\nMejorar",
                 "precio_unit_mejora": "P. Unit a \nMejorar",
                 "renta_para_mejorar": "Renta a \nMejorar %",
@@ -130,6 +131,7 @@ class TableConfig:
                 "precio_ref_unitario": "PRECIO DE REFERENCIA",
                 "renta_referencia": "RENTA REFERENCIA",
                 "mejor_oferta": "MEJOR OFERTA ACTUAL",
+                "ultimo_oferente": "ULTIMO OFERENTE",
                 "oferta_para_mejorar": "OFERTA PARA MEJORAR",
                 "precio_unit_mejora": "PRECIO UNITARIO MEJORA",
                 "renta_para_mejorar": "RENTA PARA MEJORAR",
@@ -159,6 +161,7 @@ class TableConfig:
                 "precio_ref_unitario": 140,
                 "renta_referencia": 110,
                 "mejor_oferta": 140,
+                "ultimo_oferente": 170,
                 "oferta_para_mejorar": 150,
                 "precio_unit_mejora": 140,
                 "renta_para_mejorar": 110,

@@ -445,6 +445,8 @@ class Engine:
             mejor=mejor_val,
             oferta_min=oferta_min_val,
             presupuesto=presupuesto_val,
+            mejor_id_proveedor=str(payload.get("mejor_id_proveedor") or "") or None,
+            mejor_proveedor_txt=str(payload.get("mejor_proveedor_txt") or "") or None,
             mensaje=mensaje,
             updated_at=ts,
         )

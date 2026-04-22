@@ -401,7 +401,7 @@ class App(ctk.CTk):
             "costo_unit_ars", "costo_total_ars", "renta_minima",
             "precio_unit_aceptable", "precio_total_aceptable",
             "precio_referencia", "precio_ref_unitario", "renta_referencia",
-            "mejor_oferta", "oferta_para_mejorar",
+            "mejor_oferta", "ultimo_oferente", "oferta_para_mejorar",
             "precio_unit_mejora", "renta_para_mejorar", "obs_cambio",
         ]
         self.col_mgr.load_visible_columns(default_cols)
@@ -532,6 +532,7 @@ class App(ctk.CTk):
                 row.oferta_mia_auto = False
                 if prev_auto:
                     row.oferta_mia = False
+            row.ultimo_oferente_txt = self.handles.runtime.resolve_provider_label(best_provider) if best_provider else ""
 
             tracked = bool(row.seguir or row.costo_total_ars is not None or row.costo_unit_ars is not None)
             utilidad_pct = None
@@ -861,9 +862,11 @@ class App(ctk.CTk):
             if cfg:
                 row.seguir = bool(cfg.get("seguir"))
                 row.oferta_mia = bool(cfg.get("oferta_mia"))
+            best_provider = str(getattr(row, "mejor_id_proveedor", "") or "").strip()
+            row.ultimo_oferente_txt = self.handles.runtime.resolve_provider_label(best_provider) if best_provider else ""
 
-            row_values = DisplayValues.build_row_values(row)
-            self.table_mgr.render_row(row.id_renglon, row_values, RowStyle.NORMAL.value)
+        current_ids = tuple(self.handles.runtime.get_mis_ids_proveedor())
+        self._reapply_offer_identity_styles("|".join(current_ids))
 
         self._apply_filters()
 

@@ -164,6 +164,7 @@ class DisplayValues:
             fmt.format_percentage(row.renta_referencia) if row.renta_referencia is not None else "",
             # Mejora en subasta
             row.mejor_oferta_txt or "",
+            row.ultimo_oferente_txt or "",
             fmt.format_money(row.oferta_para_mejorar),
             fmt.format_money(row.precio_unit_mejora),
             fmt.format_percentage(row.renta_para_mejorar) if row.renta_para_mejorar is not None else "",
