@@ -64,10 +64,12 @@ class Engine:
         self.subasta_id_by_id_cot: dict[str, int] = {}
         self.renglon_pk_by_keys: dict[tuple[int, str], int] = {}
 
-        # mi_id_proveedor por subasta (cargado bajo demanda)
-        self._mi_id_proveedor_cache: dict[int, str | None] = {}
+        # IDs propios por subasta (cargados bajo demanda)
+        self._mi_id_proveedor_cache: dict[int, tuple[str, ...]] = {}
         # Estado previo de oferta_mia_auto por renglón PK (para detectar outbid)
         self._prev_oferta_mia_auto: dict[int, bool] = {}
+        self._prev_matching_my_provider_id: dict[int, str | None] = {}
+        self._prev_market_snapshot: dict[int, dict[str, object]] = {}
 
         # estado operativo para seguridad
         self.subasta_err_streak: dict[int, int] = {}
@@ -98,7 +100,7 @@ class Engine:
         self.base_poll_seconds = max(0.2, float(seconds))
 
     def refresh_mi_id_proveedor(self, subasta_id: int) -> None:
-        """Invalida cache de mi_id_proveedor para que se recargue desde DB en el siguiente tick."""
+        """Invalida cache de IDs propios para que se recarguen desde DB en el siguiente tick."""
         self._mi_id_proveedor_cache.pop(subasta_id, None)
 
 
@@ -467,6 +469,7 @@ class Engine:
         sig = f"{mejor_txt}|{oferta_min_txt}|{mensaje}"
         changed = self.last_sig_by_renglon_pk.get(renglon_pk) != sig
         self.last_sig_by_renglon_pk[renglon_pk] = sig
+        prev_snapshot = self._prev_market_snapshot.get(renglon_pk)
 
         self._agg_counts["updates"] += 1
         if changed:
@@ -673,21 +676,22 @@ class Engine:
             ocultar_bajo_umbral = bool(cfg.get("ocultar_bajo_umbral", ocultar_bajo_umbral))
 
         # ---------------------------------------------------------------
-        # AUTO-DETECCIÓN: mi_id_proveedor
+        # AUTO-DETECCIÓN: IDs propios
         # ---------------------------------------------------------------
         mejor_id_proveedor = payload.get("mejor_id_proveedor")
 
-        # Cargar mi_id_proveedor desde cache (o DB si no está cacheado)
+        # Cargar IDs propios desde cache (o DB si no está cacheado)
         if subasta_id not in self._mi_id_proveedor_cache:
-            self._mi_id_proveedor_cache[subasta_id] = self.db.get_mi_id_proveedor(subasta_id=subasta_id)
-        mi_id_prov = self._mi_id_proveedor_cache.get(subasta_id)
+            self._mi_id_proveedor_cache[subasta_id] = self.db.get_mis_ids_proveedor(subasta_id=subasta_id)
+        my_provider_ids = self._mi_id_proveedor_cache.get(subasta_id, ())
+        matched_my_provider_id = None
+        if mejor_id_proveedor is not None:
+            best_provider_id = str(mejor_id_proveedor).strip()
+            if best_provider_id and best_provider_id in my_provider_ids:
+                matched_my_provider_id = best_provider_id
 
         # Determinar si la mejor oferta es nuestra
-        oferta_mia_auto = bool(
-            mejor_id_proveedor is not None
-            and mi_id_prov is not None
-            and str(mejor_id_proveedor).strip() == str(mi_id_prov).strip()
-        )
+        oferta_mia_auto = matched_my_provider_id is not None
 
         # Auto-merge: si detectamos automáticamente, también marcar oferta_mia
         if oferta_mia_auto:
@@ -695,8 +699,10 @@ class Engine:
 
         # Detectar OUTBID: estábamos vigentes y ahora no (cambio real en mejor oferta)
         prev_mia_auto = self._prev_oferta_mia_auto.get(renglon_pk, False)
-        outbid = bool(prev_mia_auto and not oferta_mia_auto and changed and mi_id_prov is not None)
+        prev_matching_my_provider_id = self._prev_matching_my_provider_id.get(renglon_pk)
+        outbid = bool(prev_mia_auto and not oferta_mia_auto and changed and my_provider_ids)
         self._prev_oferta_mia_auto[renglon_pk] = oferta_mia_auto
+        self._prev_matching_my_provider_id[renglon_pk] = matched_my_provider_id
         # ---------------------------------------------------------------
 
         
@@ -757,10 +763,40 @@ class Engine:
             self.db.insert_evento(
                 nivel="WARN",
                 tipo="OUTBID",
-                mensaje=f"OUTBID: renglón {rid} — tu oferta fue superada (mejor_id={mejor_id_proveedor})",
+                mensaje=(
+                    f"OUTBID: renglón {rid} — tu oferta fue superada "
+                    f"(mi_id={prev_matching_my_provider_id or '-'}, mejor_id={mejor_id_proveedor})"
+                ),
                 subasta_id=subasta_id,
                 renglon_id=renglon_pk,
             )
+
+        if changed and prev_snapshot:
+            try:
+                self.db.insert_evento_auditoria(
+                    subasta_id=subasta_id,
+                    renglon_id=renglon_pk,
+                    id_cot=str(id_cot) if id_cot is not None else None,
+                    id_renglon=str(rid),
+                    descripcion=str(payload.get("desc") or ""),
+                    detected_at=ts,
+                    portal_time_prev=str(prev_snapshot.get("hora_ultima_oferta") or "") or None,
+                    portal_time_new=str(hora_ultima_oferta or "") or None,
+                    provider_prev_id=str(prev_snapshot.get("mejor_id_proveedor") or "") or None,
+                    provider_prev_txt=str(prev_snapshot.get("mejor_proveedor_txt") or "") or None,
+                    provider_new_id=str(mejor_id_proveedor or "") or None,
+                    provider_new_txt=str(payload.get("mejor_proveedor_txt") or "") or None,
+                    best_offer_prev_txt=str(prev_snapshot.get("mejor_oferta_txt") or "") or None,
+                    best_offer_prev_val=prev_snapshot.get("mejor_oferta_val"),
+                    best_offer_new_txt=str(mejor_txt or "") or None,
+                    best_offer_new_val=mejor_val,
+                    offer_min_txt=str(oferta_min_txt or "") or None,
+                    offer_min_val=oferta_min_val,
+                    outbid=bool(outbid),
+                    my_provider_outbid_id=prev_matching_my_provider_id if outbid else None,
+                )
+            except Exception:
+                pass
 
         decision: AlertDecision = self.alert_engine.decide(
             tracked=tracked,
@@ -856,6 +892,8 @@ class Engine:
                     "oferta_mia": bool(oferta_mia),
                     "oferta_mia_auto": bool(oferta_mia_auto),
                     "outbid": bool(outbid),
+                    "matched_my_provider_id": matched_my_provider_id,
+                    "outbid_my_provider_id": prev_matching_my_provider_id if outbid else None,
                     "mejor_id_proveedor": mejor_id_proveedor,
                     "utilidad_min_pct": utilidad_min_pct,
                     "ocultar_bajo_umbral": bool(ocultar_bajo_umbral),
@@ -877,6 +915,14 @@ class Engine:
                     payload={"id_renglon": rid},
                 )
             )
+
+        self._prev_market_snapshot[renglon_pk] = {
+            "mejor_oferta_txt": mejor_txt,
+            "mejor_oferta_val": mejor_val,
+            "mejor_id_proveedor": mejor_id_proveedor,
+            "mejor_proveedor_txt": payload.get("mejor_proveedor_txt"),
+            "hora_ultima_oferta": hora_ultima_oferta,
+        }
 
     # -------------------------
     # HTTP_ERROR

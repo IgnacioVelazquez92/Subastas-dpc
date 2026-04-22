@@ -680,17 +680,20 @@ class RowEditorDialog:
         cfg = self.db_runtime.get_renglon_config(renglon_id=self.row.renglon_pk) or {}
         tracked = bool(self.row.seguir or self.row.costo_unit_ars or self.row.costo_total_ars)
         oferta_mia = bool(cfg.get("oferta_mia", False))
-        mi_id_prov = None
+        my_provider_ids: set[str] = set()
         try:
-            mi_id_prov = self.db_runtime.get_mi_id_proveedor()
+            my_provider_ids = {
+                str(value).strip()
+                for value in self.db_runtime.get_mis_ids_proveedor()
+                if str(value).strip()
+            }
         except Exception:
-            mi_id_prov = None
+            my_provider_ids = set()
 
         mejor_id_proveedor = getattr(self.row, "mejor_id_proveedor", None)
         oferta_mia_auto = bool(
             mejor_id_proveedor is not None
-            and mi_id_prov is not None
-            and str(mejor_id_proveedor).strip() == str(mi_id_prov).strip()
+            and str(mejor_id_proveedor).strip() in my_provider_ids
         )
         if oferta_mia_auto:
             oferta_mia = True

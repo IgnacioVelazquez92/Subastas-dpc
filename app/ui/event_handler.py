@@ -27,7 +27,8 @@ class EventProcessor:
         status_label_setter,
         logger,
         audio_bell_fn,
-        my_provider_id_getter=None,
+        my_provider_ids_getter=None,
+        provider_label_resolver=None,
     ):
         """
         Args:
@@ -42,7 +43,8 @@ class EventProcessor:
         self.set_status = status_label_setter
         self.log = logger
         self.bell = audio_bell_fn
-        self.get_my_provider_id = my_provider_id_getter
+        self.get_my_provider_ids = my_provider_ids_getter
+        self.resolve_provider_label = provider_label_resolver
         # Audio habilitado por defecto; se puede desactivar con MONITOR_ENABLE_SOUND=0
         self.sound_enabled = str(os.getenv("MONITOR_ENABLE_SOUND", "1")).strip().lower() in {
             "1", "true", "yes", "on"
@@ -223,7 +225,10 @@ class EventProcessor:
                 prov_id = payload.get("mejor_id_proveedor")
                 prov_alias = str(payload.get("mejor_proveedor_txt") or "").strip()
                 prov_id_txt = str(prov_id).strip() if prov_id is not None and str(prov_id).strip() else ""
-                if prov_alias and prov_id_txt:
+                resolved_provider = self._resolve_provider_label(prov_id)
+                if resolved_provider != "-" and resolved_provider != prov_id_txt:
+                    prov_txt = resolved_provider
+                elif prov_alias and prov_id_txt:
                     prov_txt = f"{prov_alias} (id={prov_id_txt})"
                 else:
                     prov_txt = prov_alias or prov_id_txt or "-"
@@ -333,18 +338,40 @@ class EventProcessor:
             row.oferta_mia_auto = True
             row.oferta_mia = True
 
-    def _get_my_provider_id(self) -> str:
-        if not callable(self.get_my_provider_id):
-            return ""
+    def _get_my_provider_ids(self) -> set[str]:
+        if not callable(self.get_my_provider_ids):
+            return set()
         try:
-            return str(self.get_my_provider_id() or "").strip()
+            value = self.get_my_provider_ids()
         except Exception:
-            return ""
+            return set()
+        if value is None:
+            return set()
+        if isinstance(value, str):
+            normalized = str(value).strip()
+            return {normalized} if normalized else set()
+        try:
+            return {str(item).strip() for item in value if str(item).strip()}
+        except Exception:
+            return set()
 
     def _matches_my_provider(self, provider_id: object) -> bool:
-        my_provider_id = self._get_my_provider_id()
+        my_provider_ids = self._get_my_provider_ids()
         best_provider_id = str(provider_id or "").strip()
-        return bool(my_provider_id and best_provider_id and best_provider_id == my_provider_id)
+        return bool(my_provider_ids and best_provider_id and best_provider_id in my_provider_ids)
+
+    def _resolve_provider_label(self, provider_id: object) -> str:
+        raw = str(provider_id or "").strip()
+        if not raw:
+            return "-"
+        if callable(self.resolve_provider_label):
+            try:
+                resolved = str(self.resolve_provider_label(raw) or "").strip()
+                if resolved:
+                    return resolved
+            except Exception:
+                pass
+        return raw
     
     def _apply_event_decorations(self, row: UIRow, payload: dict, ev: Event) -> str:
         """
@@ -362,6 +389,8 @@ class EventProcessor:
 
         # OUTBID → sonido WAV de alerta + log específico
         if outbid:
+            new_provider = self._resolve_provider_label(payload.get("mejor_id_proveedor"))
+            my_provider = self._resolve_provider_label(payload.get("outbid_my_provider_id"))
             if self.sound_enabled:
                 try:
                     play_outbid_alert()
@@ -374,7 +403,7 @@ class EventProcessor:
                     pass
             self.log(
                 f"🔔 [{row.id_renglon}] ¡OFERTA SUPERADA! "
-                f"(nuevo proveedor: {payload.get('mejor_id_proveedor', '?')})"
+                f"(mi ID: {my_provider} -> nuevo proveedor: {new_provider})"
             )
             return style
 

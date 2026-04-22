@@ -15,7 +15,7 @@ def test_update_keeps_my_offer_style_when_provider_matches_runtime_id():
         status_label_setter=lambda _text: None,
         logger=lambda _msg: None,
         audio_bell_fn=lambda: None,
-        my_provider_id_getter=lambda: "30718165",
+        my_provider_ids_getter=lambda: ("30718165", "69728"),
     )
     row = UIRow(id_renglon="1", mejor_id_proveedor="30718165")
     payload = {"alert_style": RowStyle.DANGER.value, "outbid": False}
@@ -33,11 +33,11 @@ def test_update_row_marks_auto_my_offer_when_provider_matches_runtime_id():
         status_label_setter=lambda _text: None,
         logger=lambda _msg: None,
         audio_bell_fn=lambda: None,
-        my_provider_id_getter=lambda: "30718165",
+        my_provider_ids_getter=lambda: ("30718165", "69728"),
     )
     row = UIRow(id_renglon="1")
     payload = {
-        "mejor_id_proveedor": "30718165",
+        "mejor_id_proveedor": "69728",
         "oferta_mia": False,
         "oferta_mia_auto": False,
     }

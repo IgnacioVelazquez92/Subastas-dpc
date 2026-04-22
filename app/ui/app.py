@@ -29,6 +29,7 @@ from app.ui.column_manager import ColumnManager
 from app.ui.event_handler import EventProcessor
 from app.ui.row_editor import RowEditorDialog
 from app.ui.logger_widget import LoggerWidget
+from app.ui.provider_alias_manager import ProviderAliasManager
 from app.ui.formatters import DisplayValues
 from app.ui.led_indicator import HTTPStatusLED, OfferChangeLED
 from app.ui.views.info_view import InfoWindow
@@ -60,6 +61,7 @@ class App(ctk.CTk):
         self.col_mgr: Optional[ColumnManager] = None
         self.event_processor: Optional[EventProcessor] = None
         self.logger: Optional[LoggerWidget] = None
+        self.provider_alias_mgr: Optional[ProviderAliasManager] = None
         
         # LEDs de estado
         self.http_led: Optional[HTTPStatusLED] = None
@@ -270,25 +272,35 @@ class App(ctk.CTk):
             command=self._reset_filters,
         ).pack(side="right", padx=6)
 
-        # ── Panel: Mi ID Proveedor ──────────────────────────────────────────────
+        # ── Panel: IDs propios y resolución opcional por proveedor ─────────────
         prov_bar = ctk.CTkFrame(self.main_content)
         prov_bar.pack(fill="x", padx=10, pady=(0, 6))
 
         ctk.CTkLabel(
             prov_bar,
-            text="Mi ID Proveedor:",
+            text="IDs propios:",
             font=ctk.CTkFont(size=11, weight="bold"),
         ).pack(side="left", padx=(6, 4))
 
-        self._mi_id_prov_var = tk.StringVar(value="")
-        self._mi_id_prov_entry = ctk.CTkEntry(
+        self._mi_id_prov_1_var = tk.StringVar(value="")
+        self._mi_id_prov_1_entry = ctk.CTkEntry(
             prov_bar,
-            textvariable=self._mi_id_prov_var,
-            placeholder_text="Ej: 30707010  (variable por subasta)",
-            width=240,
+            textvariable=self._mi_id_prov_1_var,
+            placeholder_text="ID propio 1",
+            width=160,
         )
-        self._mi_id_prov_entry.pack(side="left", padx=4)
-        self._mi_id_prov_entry.bind("<Return>", lambda _e: self._save_mi_id_proveedor())
+        self._mi_id_prov_1_entry.pack(side="left", padx=4)
+        self._mi_id_prov_1_entry.bind("<Return>", lambda _e: self._save_mi_id_proveedor())
+
+        self._mi_id_prov_2_var = tk.StringVar(value="")
+        self._mi_id_prov_2_entry = ctk.CTkEntry(
+            prov_bar,
+            textvariable=self._mi_id_prov_2_var,
+            placeholder_text="ID propio 2",
+            width=160,
+        )
+        self._mi_id_prov_2_entry.pack(side="left", padx=4)
+        self._mi_id_prov_2_entry.bind("<Return>", lambda _e: self._save_mi_id_proveedor())
 
         ctk.CTkButton(
             prov_bar,
@@ -304,6 +316,16 @@ class App(ctk.CTk):
             text_color="#888888",
         )
         self._lbl_mi_prov_status.pack(side="left", padx=8)
+
+        self.provider_alias_resolution = tk.BooleanVar(
+            value=bool(self.handles.runtime.get_provider_alias_resolution_enabled())
+        )
+        ctk.CTkSwitch(
+            prov_bar,
+            text="Resolver proveedor por ID",
+            variable=self.provider_alias_resolution,
+            command=self._on_toggle_provider_alias_resolution,
+        ).pack(side="left", padx=(14, 4))
 
         ctk.CTkLabel(
             prov_bar,
@@ -355,6 +377,7 @@ class App(ctk.CTk):
 
         # Logger mejorado
         self.logger = LoggerWidget(self.main_content, height=8)
+        self.provider_alias_mgr = ProviderAliasManager(self.handles.runtime, self.logger.log)
 
         # Event processor con referencia a LEDs
         self.event_processor = EventProcessor(
@@ -363,7 +386,8 @@ class App(ctk.CTk):
             status_label_setter=self._set_status,
             logger=self.logger.log,
             audio_bell_fn=self.bell,
-            my_provider_id_getter=self.handles.runtime.get_mi_id_proveedor,
+            my_provider_ids_getter=self.handles.runtime.get_mis_ids_proveedor,
+            provider_label_resolver=self.handles.runtime.resolve_provider_label,
         )
         # Registrar callbacks para LEDs
         self.event_processor.on_offer_changed = self.offer_led.on_offer_changed
@@ -431,6 +455,7 @@ class App(ctk.CTk):
 
         menu.add_command(label="🔄 Actualizar", command=self.on_refresh_ui)
         menu.add_command(label="📊 Columnas", command=self.on_columns)
+        menu.add_command(label="🪪 Proveedores", command=self.on_provider_aliases)
         menu.add_separator()
         menu.add_command(label="Cabecera +", command=self._increase_header_height)
         menu.add_command(label="Cabecera -", command=self._decrease_header_height)
@@ -438,6 +463,7 @@ class App(ctk.CTk):
         menu.add_separator()
         menu.add_command(label="📥 Importar Excel", command=self.on_import_excel)
         menu.add_command(label="📤 Exportar Excel", command=self.on_export_excel)
+        menu.add_command(label="📒 Exportar Auditoria Excel", command=self.on_export_audit_excel)
         menu.add_separator()
         menu.add_command(label="🗑️  Liberar espacio", command=self.on_cleanup)
 
@@ -488,12 +514,16 @@ class App(ctk.CTk):
             return
 
         alert_engine = AlertEngine()
-        my_provider_id = str(my_provider_id or "").strip()
+        provider_ids = {
+            str(value).strip()
+            for value in (my_provider_id or "").split("|")
+            if str(value).strip()
+        }
 
         for row in self.rows.values():
             prev_auto = bool(getattr(row, "oferta_mia_auto", False))
             best_provider = str(getattr(row, "mejor_id_proveedor", "") or "").strip()
-            auto_match = bool(my_provider_id and best_provider and best_provider == my_provider_id)
+            auto_match = bool(provider_ids and best_provider and best_provider in provider_ids)
 
             if auto_match:
                 row.oferta_mia_auto = True
@@ -680,43 +710,58 @@ class App(ctk.CTk):
     # Mi ID Proveedor
     # -------------------------
     def _load_mi_id_proveedor(self) -> None:
-        """Carga el mi_id_proveedor guardado desde la BD al iniciar."""
+        """Carga IDs propios guardados desde la BD al iniciar."""
         try:
-            value = self.handles.runtime.get_mi_id_proveedor()
-            if value:
-                self._mi_id_prov_var.set(value)
+            values = self.handles.runtime.get_mis_ids_proveedor()
+            if values:
+                self._mi_id_prov_1_var.set(values[0] if len(values) > 0 else "")
+                self._mi_id_prov_2_var.set(values[1] if len(values) > 1 else "")
                 self._lbl_mi_prov_status.configure(
-                    text=f"Activo: {value}",
+                    text=f"Activos: {', '.join(values)}",
                     text_color="#5B9BD5",
                 )
         except Exception:
             pass
 
     def _save_mi_id_proveedor(self) -> None:
-        """Guarda el mi_id_proveedor ingresado y actualiza el engine."""
-        value = self._mi_id_prov_var.get().strip()
+        """Guarda IDs propios ingresados y actualiza el engine."""
+        value_1 = self._mi_id_prov_1_var.get().strip()
+        value_2 = self._mi_id_prov_2_var.get().strip()
         try:
-            self.handles.runtime.set_mi_id_proveedor(value if value else None)
-            self._reapply_offer_identity_styles(value if value else None)
-            if value:
+            self.handles.runtime.set_mis_ids_proveedor(
+                value_1 if value_1 else None,
+                value_2 if value_2 else None,
+            )
+            values = tuple(value for value in (value_1, value_2) if value)
+            self._reapply_offer_identity_styles("|".join(values))
+            if values:
                 self._lbl_mi_prov_status.configure(
-                    text=f"✓ Guardado: {value}",
+                    text=f"✓ Guardados: {', '.join(values)}",
                     text_color="#5B9BD5",
                 )
                 if self.logger:
-                    self.logger.log(f"🔵 Mi ID Proveedor actualizado → {value}")
+                    self.logger.log(f"🔵 IDs propios actualizados → {', '.join(values)}")
             else:
                 self._lbl_mi_prov_status.configure(
-                    text="Borrado (sin ID activo)",
+                    text="Borrado (sin IDs activos)",
                     text_color="#888888",
                 )
                 if self.logger:
-                    self.logger.log("🔵 Mi ID Proveedor eliminado.")
+                    self.logger.log("🔵 IDs propios eliminados.")
         except Exception as e:
             self._lbl_mi_prov_status.configure(
                 text=f"Error: {e}",
                 text_color="#FF4444",
             )
+
+    def _on_toggle_provider_alias_resolution(self) -> None:
+        enabled = bool(self.provider_alias_resolution.get())
+        self.handles.runtime.set_provider_alias_resolution_enabled(enabled)
+        if self.logger:
+            if enabled:
+                self.logger.log("🪪 Resolución de proveedor por ID activada para logs/alias.")
+            else:
+                self.logger.log("🪪 Resolución de proveedor por ID desactivada.")
 
     def _tick_my_offer_count(self) -> None:
         """Actualiza el contador de renglones donde tengo la mejor oferta."""
@@ -732,6 +777,16 @@ class App(ctk.CTk):
     def on_columns(self) -> None:
         """Abre diálogo de visibilidad de columnas."""
         self.col_mgr.show_dialog(self)
+
+    def on_provider_aliases(self) -> None:
+        """Abre el maestro de proveedores."""
+        suggested_provider_id = None
+        rid = self.table_mgr.get_selected_row_id() if self.table_mgr else None
+        if rid:
+            row = self.rows.get(rid)
+            if row and getattr(row, "mejor_id_proveedor", None):
+                suggested_provider_id = str(row.mejor_id_proveedor).strip()
+        self.provider_alias_mgr.show_dialog(self, suggested_provider_id=suggested_provider_id)
 
     def on_capture_current(self) -> None:
         """Envia comando al collector para capturar estado actual."""
@@ -1039,6 +1094,22 @@ class App(ctk.CTk):
             messagebox.showinfo("✅ Éxito", f"Se importaron {updated} filas correctamente.\n\nActualizando datos...")
         except Exception as e:
             messagebox.showerror("❌ Error", f"No se pudo importar Excel:\n{e}")
+
+    def on_export_audit_excel(self) -> None:
+        """Exporta auditoría detallada de cambios de mercado."""
+        path = filedialog.asksaveasfilename(
+            defaultextension=".xlsx",
+            filetypes=[("Excel", "*.xlsx")],
+            title="Exportar Auditoría Excel",
+        )
+        if not path:
+            return
+        try:
+            self.handles.runtime.export_audit_excel(out_path=path)
+            self.logger.log(f"📒 Auditoría exportada: {path}")
+            messagebox.showinfo("✅ Éxito", f"Auditoría exportada:\n{path}")
+        except Exception as e:
+            messagebox.showerror("❌ Error", f"No se pudo exportar la auditoría:\n{e}")
     # -------------------------
     # Zoom / Escalado Visual
     # -------------------------

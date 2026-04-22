@@ -34,7 +34,9 @@ class Subasta:
     last_ok_at: Optional[str] = None
     last_http_code: Optional[int] = None
     err_streak: int = 0
-    mi_id_proveedor: Optional[str] = None  # ID proveedor propio para esta subasta
+    mi_id_proveedor: Optional[str] = None  # LEGACY: primer ID proveedor propio
+    mi_id_proveedor_1: Optional[str] = None
+    mi_id_proveedor_2: Optional[str] = None
 
 
 @dataclass(frozen=True)

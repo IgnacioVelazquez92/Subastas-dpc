@@ -82,6 +82,8 @@ OBS_FIELDS = {
 
 TABLE_NAME = "T_Subastas"
 SHEET_NAME = "Subastas"
+AUDIT_SHEET_NAME = "Auditoria"
+AUDIT_TABLE_NAME = "T_Auditoria"
 
 MONEY_COLS = {
     "COSTO UNIT USD",
@@ -100,6 +102,35 @@ PERCENT_COLS = {
     "RENTA MINIMA %",
     "RENTA REFERENCIA %",
     "RENTA PARA MEJORAR %",
+}
+
+AUDIT_COLUMNS = [
+    "FECHA DETECCION",
+    "ID SUBASTA",
+    "ITEM",
+    "DESCRIPCION",
+    "HORA PORTAL ANTERIOR",
+    "HORA PORTAL NUEVA",
+    "PROVEEDOR ANTERIOR ID",
+    "PROVEEDOR ANTERIOR ALIAS",
+    "PROVEEDOR ANTERIOR PORTAL",
+    "PROVEEDOR NUEVO ID",
+    "PROVEEDOR NUEVO ALIAS",
+    "PROVEEDOR NUEVO PORTAL",
+    "OFERTA ANTERIOR TXT",
+    "OFERTA ANTERIOR VALOR",
+    "OFERTA NUEVA TXT",
+    "OFERTA NUEVA VALOR",
+    "MINIMO ACTUAL TXT",
+    "MINIMO ACTUAL VALOR",
+    "FUE OUTBID",
+    "MI ID SUPERADO",
+]
+
+AUDIT_MONEY_COLS = {
+    "OFERTA ANTERIOR VALOR",
+    "OFERTA NUEVA VALOR",
+    "MINIMO ACTUAL VALOR",
 }
 
 # Se mantiene por referencia conceptual, no se usa para escribir fórmulas
@@ -235,3 +266,37 @@ def import_excel_to_rows(*, file_path: str) -> list[dict]:
         rows.append(row)
 
     return rows
+
+
+def export_audit_to_excel(*, rows: Iterable[dict], out_path: str) -> None:
+    rows = list(rows)
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = AUDIT_SHEET_NAME
+    ws.append(AUDIT_COLUMNS)
+
+    if rows:
+        for row in rows:
+            ws.append([row.get(col) for col in AUDIT_COLUMNS])
+    else:
+        ws.append([None for _ in AUDIT_COLUMNS])
+
+    max_row = ws.max_row
+    max_col = ws.max_column
+    ref = f"{ws.cell(row=1, column=1).coordinate}:{ws.cell(row=max_row, column=max_col).coordinate}"
+    table = Table(displayName=AUDIT_TABLE_NAME, ref=ref)
+    table.tableStyleInfo = TableStyleInfo(
+        name="TableStyleMedium2",
+        showRowStripes=True,
+        showColumnStripes=False,
+    )
+    ws.add_table(table)
+
+    header_index = {name: i + 1 for i, name in enumerate(AUDIT_COLUMNS)}
+    for col_name, col_idx in header_index.items():
+        if col_name in AUDIT_MONEY_COLS:
+            for r in range(2, max_row + 1):
+                ws.cell(row=r, column=col_idx).number_format = "$ #.##0,00"
+
+    wb.save(out_path)

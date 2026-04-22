@@ -96,6 +96,10 @@ class Database:
         existing_subasta_cols = {c[1] for c in subasta_cols}
         if "mi_id_proveedor" not in existing_subasta_cols:
             self.execute("ALTER TABLE subasta ADD COLUMN mi_id_proveedor TEXT")
+        if "mi_id_proveedor_1" not in existing_subasta_cols:
+            self.execute("ALTER TABLE subasta ADD COLUMN mi_id_proveedor_1 TEXT")
+        if "mi_id_proveedor_2" not in existing_subasta_cols:
+            self.execute("ALTER TABLE subasta ADD COLUMN mi_id_proveedor_2 TEXT")
 
     def init_schema(self, schema_path: str | Path) -> None:
         """
@@ -240,23 +244,163 @@ class Database:
         return int(row["id"]) if row else None
 
     def get_mi_id_proveedor(self, *, subasta_id: int) -> str | None:
-        """Devuelve el mi_id_proveedor asignado a la subasta, o None."""
-        row = self.fetchone("SELECT mi_id_proveedor FROM subasta WHERE id = ?", (subasta_id,))
-        return str(row["mi_id_proveedor"]) if row and row["mi_id_proveedor"] else None
+        """Compatibilidad: devuelve el primer ID propio disponible de la subasta."""
+        ids = self.get_mis_ids_proveedor(subasta_id=subasta_id)
+        return ids[0] if ids else None
 
     def set_mi_id_proveedor(self, *, subasta_id: int, mi_id_proveedor: str | None) -> None:
-        """Guarda (o borra) el mi_id_proveedor de la subasta."""
+        """Compatibilidad: guarda solo el ID propio 1 y limpia el ID propio 2."""
+        self.set_mis_ids_proveedor(
+            subasta_id=subasta_id,
+            mi_id_proveedor_1=mi_id_proveedor,
+            mi_id_proveedor_2=None,
+        )
+
+    def get_mis_ids_proveedor(self, *, subasta_id: int) -> tuple[str, ...]:
+        """Devuelve IDs propios configurados para la subasta, sin duplicados y preservando orden."""
+        row = self.fetchone(
+            """
+            SELECT mi_id_proveedor, mi_id_proveedor_1, mi_id_proveedor_2
+            FROM subasta
+            WHERE id = ?
+            """,
+            (subasta_id,),
+        )
+        if not row:
+            return ()
+
+        values = [
+            row["mi_id_proveedor_1"],
+            row["mi_id_proveedor_2"],
+            row["mi_id_proveedor"],
+        ]
+        seen: set[str] = set()
+        normalized: list[str] = []
+        for value in values:
+            raw = str(value or "").strip()
+            if not raw or raw in seen:
+                continue
+            seen.add(raw)
+            normalized.append(raw)
+        return tuple(normalized)
+
+    def set_mis_ids_proveedor(
+        self,
+        *,
+        subasta_id: int,
+        mi_id_proveedor_1: str | None,
+        mi_id_proveedor_2: str | None,
+    ) -> None:
+        """Guarda los dos IDs propios de la subasta y mantiene compatibilidad legacy."""
+        value_1 = str(mi_id_proveedor_1 or "").strip() or None
+        value_2 = str(mi_id_proveedor_2 or "").strip() or None
+        if value_1 and value_2 and value_1 == value_2:
+            value_2 = None
         self.execute(
-            "UPDATE subasta SET mi_id_proveedor = ? WHERE id = ?",
-            (mi_id_proveedor, subasta_id),
+            """
+            UPDATE subasta
+            SET mi_id_proveedor = ?,
+                mi_id_proveedor_1 = ?,
+                mi_id_proveedor_2 = ?
+            WHERE id = ?
+            """,
+            (value_1, value_1, value_2, subasta_id),
         )
 
     def get_mi_id_proveedor_by_id_cot(self, *, id_cot: str) -> str | None:
-        """Devuelve mi_id_proveedor buscando por id_cot."""
+        """Compatibilidad: devuelve el primer ID propio disponible buscando por id_cot."""
+        ids = self.get_mis_ids_proveedor_by_id_cot(id_cot=id_cot)
+        return ids[0] if ids else None
+
+    def get_mis_ids_proveedor_by_id_cot(self, *, id_cot: str) -> tuple[str, ...]:
+        """Devuelve IDs propios configurados buscando por id_cot."""
+        row = self.fetchone("SELECT id FROM subasta WHERE id_cot = ?", (id_cot,))
+        if not row:
+            return ()
+        return self.get_mis_ids_proveedor(subasta_id=int(row["id"]))
+
+    def upsert_provider_alias(
+        self,
+        *,
+        id_proveedor: str,
+        alias: str,
+        notas: str | None = None,
+        activo: bool = True,
+    ) -> None:
+        provider_id = str(id_proveedor or "").strip()
+        provider_alias = str(alias or "").strip()
+        if not provider_id or not provider_alias:
+            raise ValueError("id_proveedor y alias son requeridos")
+
         row = self.fetchone(
-            "SELECT mi_id_proveedor FROM subasta WHERE id_cot = ?", (id_cot,)
+            "SELECT id_proveedor FROM proveedor_alias WHERE id_proveedor = ?",
+            (provider_id,),
         )
-        return str(row["mi_id_proveedor"]) if row and row["mi_id_proveedor"] else None
+        payload = (
+            provider_alias,
+            notas,
+            1 if activo else 0,
+            provider_id,
+        )
+        if row:
+            self.execute(
+                """
+                UPDATE proveedor_alias
+                SET alias = ?,
+                    notas = ?,
+                    activo = ?,
+                    updated_at = datetime('now')
+                WHERE id_proveedor = ?
+                """,
+                payload,
+            )
+        else:
+            self.execute(
+                """
+                INSERT INTO proveedor_alias (alias, notas, activo, id_proveedor)
+                VALUES (?, ?, ?, ?)
+                """,
+                payload,
+            )
+
+    def get_provider_alias(self, *, id_proveedor: str) -> str | None:
+        provider_id = str(id_proveedor or "").strip()
+        if not provider_id:
+            return None
+        row = self.fetchone(
+            """
+            SELECT alias
+            FROM proveedor_alias
+            WHERE id_proveedor = ? AND activo = 1
+            """,
+            (provider_id,),
+        )
+        return str(row["alias"]).strip() if row and row["alias"] else None
+
+    def list_provider_aliases(self) -> list[dict]:
+        rows = self.fetchall(
+            """
+            SELECT id_proveedor, alias, notas, activo, updated_at
+            FROM proveedor_alias
+            ORDER BY activo DESC, alias COLLATE NOCASE, id_proveedor
+            """
+        )
+        return [
+            {
+                "id_proveedor": str(row["id_proveedor"]),
+                "alias": str(row["alias"] or "").strip(),
+                "notas": str(row["notas"] or "").strip(),
+                "activo": bool(row["activo"]),
+                "updated_at": str(row["updated_at"] or ""),
+            }
+            for row in rows
+        ]
+
+    def delete_provider_alias(self, *, id_proveedor: str) -> None:
+        provider_id = str(id_proveedor or "").strip()
+        if not provider_id:
+            return
+        self.execute("DELETE FROM proveedor_alias WHERE id_proveedor = ?", (provider_id,))
 
     def get_renglon_id_by_keys(
         self,
@@ -644,6 +788,7 @@ class Database:
 
     def cleanup_logs(self) -> None:
         self.execute("DELETE FROM evento")
+        self.execute("DELETE FROM evento_auditoria")
 
     def cleanup_states(self) -> None:
         """Borra todos los datos de estados y renglones.
@@ -657,6 +802,7 @@ class Database:
         self.execute("DELETE FROM renglon_config")  # hijo de renglon
         self.execute("DELETE FROM renglon_excel")   # hijo de renglon
         self.execute("DELETE FROM evento")          # hijo de subasta/renglon
+        self.execute("DELETE FROM evento_auditoria")# hijo de subasta/renglon
         self.execute("DELETE FROM renglon")         # hijo de subasta
         self.execute("DELETE FROM subasta")         # padre
         
@@ -687,3 +833,120 @@ class Database:
             """,
             (subasta_id, renglon_id, nivel, tipo, mensaje),
         )
+
+    def insert_evento_auditoria(
+        self,
+        *,
+        subasta_id: int | None,
+        renglon_id: int | None,
+        id_cot: str | None,
+        id_renglon: str,
+        descripcion: str | None,
+        detected_at: str,
+        portal_time_prev: str | None,
+        portal_time_new: str | None,
+        provider_prev_id: str | None,
+        provider_prev_txt: str | None,
+        provider_new_id: str | None,
+        provider_new_txt: str | None,
+        best_offer_prev_txt: str | None,
+        best_offer_prev_val: float | None,
+        best_offer_new_txt: str | None,
+        best_offer_new_val: float | None,
+        offer_min_txt: str | None,
+        offer_min_val: float | None,
+        outbid: bool,
+        my_provider_outbid_id: str | None,
+    ) -> int:
+        return self.execute_returning_id(
+            """
+            INSERT INTO evento_auditoria (
+                subasta_id, renglon_id, id_cot, id_renglon, descripcion, detected_at,
+                portal_time_prev, portal_time_new,
+                provider_prev_id, provider_prev_txt, provider_new_id, provider_new_txt,
+                best_offer_prev_txt, best_offer_prev_val, best_offer_new_txt, best_offer_new_val,
+                offer_min_txt, offer_min_val, outbid, my_provider_outbid_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                subasta_id,
+                renglon_id,
+                id_cot,
+                id_renglon,
+                descripcion,
+                detected_at,
+                portal_time_prev,
+                portal_time_new,
+                provider_prev_id,
+                provider_prev_txt,
+                provider_new_id,
+                provider_new_txt,
+                best_offer_prev_txt,
+                best_offer_prev_val,
+                best_offer_new_txt,
+                best_offer_new_val,
+                offer_min_txt,
+                offer_min_val,
+                1 if outbid else 0,
+                my_provider_outbid_id,
+            ),
+        )
+
+    def fetch_audit_export_rows(self, *, subasta_id: int) -> list[dict]:
+        rows = self.fetchall(
+            """
+            SELECT
+                a.detected_at,
+                s.id_cot,
+                a.id_renglon,
+                a.descripcion,
+                a.portal_time_prev,
+                a.portal_time_new,
+                a.provider_prev_id,
+                pa_prev.alias AS provider_prev_alias,
+                a.provider_prev_txt,
+                a.provider_new_id,
+                pa_new.alias AS provider_new_alias,
+                a.provider_new_txt,
+                a.best_offer_prev_txt,
+                a.best_offer_prev_val,
+                a.best_offer_new_txt,
+                a.best_offer_new_val,
+                a.offer_min_txt,
+                a.offer_min_val,
+                a.outbid,
+                a.my_provider_outbid_id
+            FROM evento_auditoria a
+            LEFT JOIN subasta s ON s.id = a.subasta_id
+            LEFT JOIN proveedor_alias pa_prev ON pa_prev.id_proveedor = a.provider_prev_id AND pa_prev.activo = 1
+            LEFT JOIN proveedor_alias pa_new ON pa_new.id_proveedor = a.provider_new_id AND pa_new.activo = 1
+            WHERE a.subasta_id = ?
+            ORDER BY a.detected_at, a.id
+            """,
+            (subasta_id,),
+        )
+        return [
+            {
+                "FECHA DETECCION": row["detected_at"],
+                "ID SUBASTA": row["id_cot"],
+                "ITEM": row["id_renglon"],
+                "DESCRIPCION": row["descripcion"],
+                "HORA PORTAL ANTERIOR": row["portal_time_prev"],
+                "HORA PORTAL NUEVA": row["portal_time_new"],
+                "PROVEEDOR ANTERIOR ID": row["provider_prev_id"],
+                "PROVEEDOR ANTERIOR ALIAS": row["provider_prev_alias"],
+                "PROVEEDOR ANTERIOR PORTAL": row["provider_prev_txt"],
+                "PROVEEDOR NUEVO ID": row["provider_new_id"],
+                "PROVEEDOR NUEVO ALIAS": row["provider_new_alias"],
+                "PROVEEDOR NUEVO PORTAL": row["provider_new_txt"],
+                "OFERTA ANTERIOR TXT": row["best_offer_prev_txt"],
+                "OFERTA ANTERIOR VALOR": row["best_offer_prev_val"],
+                "OFERTA NUEVA TXT": row["best_offer_new_txt"],
+                "OFERTA NUEVA VALOR": row["best_offer_new_val"],
+                "MINIMO ACTUAL TXT": row["offer_min_txt"],
+                "MINIMO ACTUAL VALOR": row["offer_min_val"],
+                "FUE OUTBID": "SI" if row["outbid"] else "NO",
+                "MI ID SUPERADO": row["my_provider_outbid_id"],
+            }
+            for row in rows
+        ]

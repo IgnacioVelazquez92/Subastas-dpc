@@ -7,7 +7,7 @@ En macOS/Linux usa subprocess + afplay / paplay como fallback.
 Si no hay archivo MP3/WAV, genera un doble-beep de emergencia con winsound.Beep().
 
 Carpeta esperada de sonidos: assets/sounds/
-Archivo de alerta de outbid:  assets/sounds/outbid_alert.mp3
+Archivo canónico de alerta: assets/sounds/alert.mp3
 """
 
 from __future__ import annotations
@@ -21,8 +21,10 @@ from app.utils.app_paths import get_sounds_dir
 
 
 SOUNDS_DIR = get_sounds_dir()
-OUTBID_SOUND_MP3 = SOUNDS_DIR / "outbid_alert.mp3"
-OUTBID_SOUND_WAV = SOUNDS_DIR / "outbid_alert.wav"
+ALERT_SOUND_MP3 = SOUNDS_DIR / "alert.mp3"
+ALERT_SOUND_WAV = SOUNDS_DIR / "alert.wav"
+LEGACY_OUTBID_SOUND_MP3 = SOUNDS_DIR / "outbid_alert.mp3"
+LEGACY_OUTBID_SOUND_WAV = SOUNDS_DIR / "outbid_alert.wav"
 
 
 def _play_wav_windows(path: Path) -> None:
@@ -66,9 +68,9 @@ def _play_mp3_windows_with_fallback(path: Path, repeat: int = 1) -> None:
     try:
         _play_mp3_windows_blocking(path, repeat=repeat)
     except Exception:
-        if OUTBID_SOUND_WAV.exists():
+        if ALERT_SOUND_WAV.exists():
             try:
-                _play_wav_windows(OUTBID_SOUND_WAV)
+                _play_wav_windows(ALERT_SOUND_WAV)
                 return
             except Exception:
                 pass
@@ -112,16 +114,16 @@ def play_outbid_alert() -> None:
     Reproduce la alerta de OUTBID (oferta propia superada).
 
     Prioridad:
-    1. assets/sounds/outbid_alert.mp3 (3 repeticiones secuenciales)
-    2. assets/sounds/outbid_alert.wav
+    1. assets/sounds/alert.mp3 (3 repeticiones secuenciales)
+    2. assets/sounds/alert.wav
     3. cualquier otro .wav en assets/sounds/
     4. doble-beep con winsound.Beep() en Windows
     """
     try:
         sound = _find_outbid_sound()
         # En Windows priorizar WAV asincrono: es mas estable y no bloquea UI.
-        if OUTBID_SOUND_WAV.exists() and sys.platform == "win32":
-            _play_wav_windows(OUTBID_SOUND_WAV)
+        if ALERT_SOUND_WAV.exists() and sys.platform == "win32":
+            _play_wav_windows(ALERT_SOUND_WAV)
             return
 
         if sound and sound.suffix.lower() == ".mp3" and sys.platform == "win32":
@@ -157,11 +159,15 @@ def play_wav_file(filename: str) -> None:
 
 
 def _find_outbid_sound() -> Path | None:
-    """Busca sonido de alerta; primero MP3 canonico, luego WAV canonico, luego cualquier WAV."""
-    if OUTBID_SOUND_MP3.exists():
-        return OUTBID_SOUND_MP3
-    if OUTBID_SOUND_WAV.exists():
-        return OUTBID_SOUND_WAV
+    """Busca sonido de alerta; primero nombre canónico, luego legacy, luego cualquier WAV."""
+    if ALERT_SOUND_MP3.exists():
+        return ALERT_SOUND_MP3
+    if ALERT_SOUND_WAV.exists():
+        return ALERT_SOUND_WAV
+    if LEGACY_OUTBID_SOUND_MP3.exists():
+        return LEGACY_OUTBID_SOUND_MP3
+    if LEGACY_OUTBID_SOUND_WAV.exists():
+        return LEGACY_OUTBID_SOUND_WAV
     if SOUNDS_DIR.exists():
         wavs = sorted(SOUNDS_DIR.glob("*.wav"))
         if wavs:
@@ -182,11 +188,16 @@ def ensure_default_sound() -> None:
     Util para que el sistema funcione sin que el usuario deba copiar un archivo.
     El tono generado es un acorde de alerta de doble pitido (880 Hz + 1100 Hz).
     """
-    if OUTBID_SOUND_MP3.exists() or OUTBID_SOUND_WAV.exists():
+    if (
+        ALERT_SOUND_MP3.exists()
+        or ALERT_SOUND_WAV.exists()
+        or LEGACY_OUTBID_SOUND_MP3.exists()
+        or LEGACY_OUTBID_SOUND_WAV.exists()
+    ):
         return
     try:
         SOUNDS_DIR.mkdir(parents=True, exist_ok=True)
-        _generate_default_wav(OUTBID_SOUND_WAV)
+        _generate_default_wav(ALERT_SOUND_WAV)
     except Exception:
         pass
 

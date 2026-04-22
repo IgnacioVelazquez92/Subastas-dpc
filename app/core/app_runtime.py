@@ -33,7 +33,7 @@ from app.db.database import Database
 from app.core.engine import Engine, EngineConfig
 from app.core.events import EventType, info
 from app.utils.time import now_iso
-from app.excel.excel_io import export_subasta_to_excel, import_excel_to_rows
+from app.excel.excel_io import export_subasta_to_excel, export_audit_to_excel, import_excel_to_rows
 from app.collector.mock_collector import MockCollector
 from app.collector.playwright_collector import PlaywrightCollector
 
@@ -327,6 +327,13 @@ class AppRuntime:
 
         return updated
 
+    def export_audit_excel(self, *, out_path: str) -> None:
+        subasta_id = self.db.get_running_subasta_id() or self.db.get_latest_subasta_id()
+        if not subasta_id:
+            raise ValueError("No hay subastas en la base")
+        rows = self.db.fetch_audit_export_rows(subasta_id=subasta_id)
+        export_audit_to_excel(rows=rows, out_path=out_path)
+
     def get_renglon_config(self, *, renglon_id: int) -> dict | None:
         return self.db.get_renglon_config(renglon_id=renglon_id)
 
@@ -337,22 +344,78 @@ class AppRuntime:
         self.db.set_ui_config(key=key, value=value)
 
     def get_mi_id_proveedor(self) -> str | None:
-        """Devuelve mi_id_proveedor de la subasta activa (o más reciente)."""
+        """Compatibilidad: devuelve el primer ID propio de la subasta activa (o más reciente)."""
         subasta_id = self.db.get_running_subasta_id() or self.db.get_latest_subasta_id()
         if not subasta_id:
             return None
         return self.db.get_mi_id_proveedor(subasta_id=subasta_id)
 
+    def get_mis_ids_proveedor(self) -> tuple[str, ...]:
+        """Devuelve IDs propios 1/2 de la subasta activa (o más reciente)."""
+        subasta_id = self.db.get_running_subasta_id() or self.db.get_latest_subasta_id()
+        if not subasta_id:
+            return ()
+        return self.db.get_mis_ids_proveedor(subasta_id=subasta_id)
+
     def set_mi_id_proveedor(self, value: str | None) -> None:
-        """Guarda mi_id_proveedor en la subasta activa (o más reciente) e invalida cache del engine."""
+        """Compatibilidad: guarda solo el primer ID propio."""
+        self.set_mis_ids_proveedor(value, None)
+
+    def set_mis_ids_proveedor(self, value_1: str | None, value_2: str | None) -> None:
+        """Guarda IDs propios 1/2 en la subasta activa (o más reciente) e invalida cache del engine."""
         subasta_id = self.db.get_running_subasta_id() or self.db.get_latest_subasta_id()
         if not subasta_id:
             return
-        self.db.set_mi_id_proveedor(
+        self.db.set_mis_ids_proveedor(
             subasta_id=subasta_id,
-            mi_id_proveedor=value.strip() if value and value.strip() else None,
+            mi_id_proveedor_1=value_1.strip() if value_1 and value_1.strip() else None,
+            mi_id_proveedor_2=value_2.strip() if value_2 and value_2.strip() else None,
         )
         self.engine.refresh_mi_id_proveedor(subasta_id)
+
+    def get_provider_alias_resolution_enabled(self) -> bool:
+        value = self.db.get_ui_config(key="provider_alias_resolution_enabled")
+        if value is None:
+            return False
+        return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+    def set_provider_alias_resolution_enabled(self, enabled: bool) -> None:
+        self.db.set_ui_config(
+            key="provider_alias_resolution_enabled",
+            value="1" if enabled else "0",
+        )
+
+    def resolve_provider_label(self, provider_id: str | None) -> str:
+        raw = str(provider_id or "").strip()
+        if not raw:
+            return "-"
+        if not self.get_provider_alias_resolution_enabled():
+            return raw
+        alias = self.db.get_provider_alias(id_proveedor=raw)
+        if alias:
+            return f"{alias} (id={raw})"
+        return raw
+
+    def list_provider_aliases(self) -> list[dict]:
+        return self.db.list_provider_aliases()
+
+    def save_provider_alias(
+        self,
+        *,
+        id_proveedor: str,
+        alias: str,
+        notas: str | None = None,
+        activo: bool = True,
+    ) -> None:
+        self.db.upsert_provider_alias(
+            id_proveedor=id_proveedor,
+            alias=alias,
+            notas=notas,
+            activo=activo,
+        )
+
+    def delete_provider_alias(self, *, id_proveedor: str) -> None:
+        self.db.delete_provider_alias(id_proveedor=id_proveedor)
 
     def start_collector(self) -> None:
         """

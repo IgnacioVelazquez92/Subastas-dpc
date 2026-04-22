@@ -22,7 +22,9 @@ CREATE TABLE IF NOT EXISTS subasta (
     last_ok_at      TEXT,                       -- último update válido
     last_http_code  INTEGER,                    -- último HTTP status observado
     err_streak      INTEGER NOT NULL DEFAULT 0, -- errores consecutivos (seguridad)
-    mi_id_proveedor TEXT                        -- ID de proveedor propio en esta subasta (anónimo/variable)
+    mi_id_proveedor TEXT,                       -- LEGACY: primer ID propio (compatibilidad)
+    mi_id_proveedor_1 TEXT,                     -- ID propio 1 para esta subasta
+    mi_id_proveedor_2 TEXT                      -- ID propio 2 para esta subasta
 );
 
 CREATE INDEX IF NOT EXISTS idx_subasta_estado ON subasta(estado);
@@ -119,6 +121,55 @@ CREATE INDEX IF NOT EXISTS idx_evento_created ON evento(created_at);
 CREATE INDEX IF NOT EXISTS idx_evento_nivel ON evento(nivel);
 CREATE INDEX IF NOT EXISTS idx_evento_tipo ON evento(tipo);
 CREATE INDEX IF NOT EXISTS idx_evento_subasta ON evento(subasta_id);
+
+-- =========================================================
+-- Tabla: evento_auditoria
+-- Historial detallado de cambios de mercado para exportacion y analisis
+-- =========================================================
+CREATE TABLE IF NOT EXISTS evento_auditoria (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    subasta_id            INTEGER,
+    renglon_id            INTEGER,
+    id_cot                TEXT,
+    id_renglon            TEXT NOT NULL,
+    descripcion           TEXT,
+    detected_at           TEXT NOT NULL DEFAULT (datetime('now')),
+    portal_time_prev      TEXT,
+    portal_time_new       TEXT,
+    provider_prev_id      TEXT,
+    provider_prev_txt     TEXT,
+    provider_new_id       TEXT,
+    provider_new_txt      TEXT,
+    best_offer_prev_txt   TEXT,
+    best_offer_prev_val   REAL,
+    best_offer_new_txt    TEXT,
+    best_offer_new_val    REAL,
+    offer_min_txt         TEXT,
+    offer_min_val         REAL,
+    outbid                INTEGER NOT NULL DEFAULT 0,
+    my_provider_outbid_id TEXT,
+
+    FOREIGN KEY(subasta_id) REFERENCES subasta(id) ON DELETE SET NULL,
+    FOREIGN KEY(renglon_id) REFERENCES renglon(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_evento_auditoria_detected ON evento_auditoria(detected_at);
+CREATE INDEX IF NOT EXISTS idx_evento_auditoria_subasta ON evento_auditoria(subasta_id);
+CREATE INDEX IF NOT EXISTS idx_evento_auditoria_renglon ON evento_auditoria(renglon_id);
+
+-- =========================================================
+-- Tabla: proveedor_alias
+-- Maestro opcional de IDs de proveedor para resolver alias/nombres
+-- =========================================================
+CREATE TABLE IF NOT EXISTS proveedor_alias (
+    id_proveedor     TEXT PRIMARY KEY,
+    alias            TEXT NOT NULL,
+    notas            TEXT,
+    activo           INTEGER NOT NULL DEFAULT 1,
+    updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_proveedor_alias_activo ON proveedor_alias(activo);
 
 -- =========================================================
 -- Tabla: renglon_excel
